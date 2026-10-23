@@ -13,8 +13,8 @@ from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"   # must match prepare_dataset.py
-OUT_DIR = "outputs/baymax-lora"
+BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+OUT_DIR = "outputs/baymax-lora-v2"
 MAX_LEN = 512                                # lower to 384 if you hit out-of-memory
 
 # bf16 needs an Ampere-or-newer GPU (RTX 30xx+); older cards fall back to fp16.
@@ -76,7 +76,7 @@ data = data.map(to_prompt_completion, remove_columns=["messages"])
 # ---------------------------------------------------------------
 args = SFTConfig(
     output_dir=OUT_DIR,
-    num_train_epochs=3,
+    num_train_epochs=2,
     per_device_train_batch_size=2,       # if out-of-memory: 1 (and set accumulation to 16)
     per_device_eval_batch_size=2,
     gradient_accumulation_steps=8,
