@@ -14,7 +14,7 @@ import numpy as np
 from transformers import AutoTokenizer
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"   # must match the model you will fine-tune
-IN_PATH = "baymax_data.jsonl"
+IN_PATH = "baymax_final.jsonl"
 MAX_TOKENS = 512        # sequence limit for a 6GB GPU; longer rows get dropped
 EVAL_FRACTION = 0.05
 
