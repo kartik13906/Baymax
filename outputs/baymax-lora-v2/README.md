@@ -1,12 +1,15 @@
 ---
 base_model: Qwen/Qwen2.5-1.5B-Instruct
-library_name: transformers
+library_name: peft
 model_name: baymax-lora-v2
 tags:
-- generated_from_trainer
-- trl
+- base_model:adapter:Qwen/Qwen2.5-1.5B-Instruct
+- lora
 - sft
+- transformers
+- trl
 licence: license
+pipeline_tag: text-generation
 ---
 
 # Model Card for baymax-lora-v2
@@ -35,6 +38,7 @@ This model was trained with SFT.
 
 ### Framework versions
 
+- PEFT 0.21.2
 - TRL: 1.16.0
 - Transformers: 5.20.2
 - Pytorch: 2.14.1
