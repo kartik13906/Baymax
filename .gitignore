@@ -3,3 +3,5 @@ __pycache__/
 *.log
 *.jsonl
 nohup.out
+llama.cpp/
+outputs/
