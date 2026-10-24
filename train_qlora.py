@@ -75,7 +75,7 @@ data = data.map(to_prompt_completion, remove_columns=["messages"])
 #    Effective batch = 2 x 8 = 16 examples per optimizer step.
 # ---------------------------------------------------------------
 args = SFTConfig(
-    output_dir=OUT_DIR,
+    output_dir="outputs/baymax-lora-v4",
     num_train_epochs=2,
     per_device_train_batch_size=2,       # if out-of-memory: 1 (and set accumulation to 16)
     per_device_eval_batch_size=2,

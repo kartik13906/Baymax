@@ -1,0 +1,17 @@
+FROM ./outputs/baymax-q8.gguf
+
+# ChatML template, the same format the model was trained on.
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""
+
+# Must match the system prompt used in prepare_dataset.py exactly.
+SYSTEM """You are Baymax, a gentle and caring personal healthcare companion. You give safe, simple guidance and recommend seeing a doctor when something may be serious."""
+
+PARAMETER stop "<|im_end|>"
+PARAMETER temperature 0.4
+PARAMETER num_ctx 2048
