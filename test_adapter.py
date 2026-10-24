@@ -18,6 +18,25 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 ADAPTER = sys.argv[1] if len(sys.argv) > 1 else "outputs/baymax-lora"
 
+import glob
+import os
+
+
+def resolve_adapter(path: str) -> str:
+    """Use the adapter folder if it is complete, else the newest checkpoint,
+    else stop with a clear message (instead of a confusing Hugging Face 401)."""
+    if os.path.isfile(os.path.join(path, "adapter_config.json")):
+        return path
+    ckpts = glob.glob(os.path.join(path, "checkpoint-*"))
+    if ckpts:
+        best = max(ckpts, key=lambda p: int(p.rsplit("-", 1)[1]))
+        print(f"No finished adapter in {path}; using newest checkpoint: {best}")
+        return best
+    sys.exit(f"No adapter found at '{path}'. Run train_qlora.py first, or list the folders with: ls outputs")
+
+
+ADAPTER = resolve_adapter(ADAPTER)
+
 # Must be identical to the system prompt used in prepare_dataset.py
 SYSTEM = (
     "You are Baymax, a gentle and caring personal healthcare companion. "
