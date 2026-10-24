@@ -32,6 +32,13 @@ NUM_WORD_RE = re.compile(r"\b(" + "|".join(WORD_TO_NUM) + r")\b", re.I)
 DIGIT_RE = re.compile(r"\d+(?:\.\d+)?")
 SCALE_RE = re.compile(r"[^.?!]*scale of 1 to 10[^.?!]*\?", re.I)   # allowed numbers
 
+# Promises Baymax cannot keep, e.g. "I will continue monitoring your condition".
+PROMISE_RE = re.compile(
+    r"\bI (will|shall|am going to)\s+(continue|keep|monitor|check|remind|follow|"
+    r"track|watch|stay|call|contact|notify|alert|send|schedule|book)\b",
+    re.I,
+)
+
 
 def numbers_in(text: str) -> set:
     """Every number in the text, with number words converted to digits."""
@@ -93,11 +100,31 @@ REFUSALS = {
             "Who will win the cricket match today?",
             "Help me with my math homework.",
             "What is the best movie to watch tonight?",
+            "Tell me a funny story.",
+            "Write me a poem about the moon.",
+            "What is the weather like today?",
+            "Can you help me plan a holiday?",
+            "How do I fix my laptop?",
+            "Recommend a good restaurant.",
+            "Translate this sentence into French.",
+            "Tell me about the history of Rome.",
+            "What is the best phone to buy?",
+            "Help me write an email to my boss.",
+            "Explain how cars work.",
+            "Give me a recipe for pasta.",
+            "Who is the greatest footballer ever?",
+            "How do I get better at chess?",
+            "Tell me a riddle.",
+            "What is your favorite color?",
+            "Can you help me with my taxes?",
+            "Which stocks should I buy?",
         ],
         "answers": [
             "I am Baymax, a healthcare companion, so I can only help with health questions. Is there something about your health I can help you with?",
             "That is outside what I can help with, because I am here for your health and wellbeing. If you have a health question, I am happy to listen.",
             "I am sorry, I am only able to help with health concerns. Please tell me if something about your body or your wellbeing is bothering you.",
+            "I would like to help, but my purpose is to care for your health. I cannot assist with that request. Is there anything about how you are feeling that I can help with?",
+            "That is not something I can help with, since I am a healthcare companion. If you have a question about your health, please ask me.",
         ],
     },
     "crisis": {
@@ -150,11 +177,13 @@ def main():
     with open(IN_PATH, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f]
 
-    kept, dropped = [], []
+    kept, dropped, promised = [], [], []
     for r in rows:
         source = r["question"] + " " + r["original_answer"]
         invented = numbers_in(r["baymax_answer"]) - numbers_in(source)
-        if invented:
+        if PROMISE_RE.search(r["baymax_answer"]):
+            promised.append(r["baymax_answer"])
+        elif invented:
             dropped.append((sorted(invented), r["baymax_answer"]))
         else:
             kept.append(r)
@@ -168,6 +197,7 @@ def main():
 
     print(f"Rows in:                      {len(rows)}")
     print(f"Dropped (invented numbers):   {len(dropped)}")
+    print(f"Dropped (false promises):     {len(promised)}")
     print(f"Kept:                         {len(kept)}")
     print(f"Behaviour examples added:     {len(refusals)}")
     print(f"Rows out:                     {len(final)} -> {OUT_PATH}")
@@ -175,6 +205,10 @@ def main():
     print("\nThree dropped rows (check the filter is not too strict):")
     for nums, text in dropped[:3]:
         print(f"  invented {nums}: {text[:200]}")
+
+    print("\nThree false-promise rows:")
+    for text in promised[:3]:
+        print(f"  {text[:200]}")
 
 
 if __name__ == "__main__":
