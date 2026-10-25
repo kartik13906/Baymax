@@ -52,6 +52,7 @@ This is an independent fan project inspired by the fictional character Baymax. I
 | Training | `prepare_dataset.py`, `train_qlora.py` |
 | Evaluation and export | `test_adapter.py`, `merge_adapter.py`, `Modelfile` |
 | Safety | `safety_gate.py`, `output_guard.py`, `test_safety.py`, `baymax_chat.py` |
+| Wake phrases | `activation.py`, `baymax_live.py`, `test_activation.py` |
 | Voice | `listen.py`, `sentence_buffer.py`, `speak.py`, `voice_lab.py`, `baymax_speak.py`, `test_speech.py` |
 
 Trained adapters, GGUF files and downloaded models are **not** in the repository (they are large). The steps below rebuild them.
@@ -121,6 +122,7 @@ Each step prints what it did. Run them in order from the project folder with the
 | Command | What it does |
 |---|---|
 | `python baymax_chat.py` | Typed chat: safety gate, then the model, then the output guard. Shows what the gate and guard did. |
+| `python baymax_live.py` | **Wake-phrase mode.** Baymax sleeps until it hears "ouch", "it hurts", "oh no", "I need help" or its name (or a safety-gate emergency). Then it asks for a pain rating and talks with you; "thank you" or silence puts it back to sleep. `--typed` tests it without a microphone, `--idle N` sets the sleep timeout. Add your own words in `EXTRA_TRIGGERS` in `activation.py`. |
 | `python baymax_speak.py` | Same, but answers are spoken, and it prints timings (first token, first sentence, first sound). |
 | `python listen.py` | Microphone to text, with timings and the safety gate's verdict. `--list-devices`, `--mic N`, `--stt-device cpu`. |
 | `python speak.py "Hello"` | Speak one sentence. `--voice`, `--speed`, `--pitch`, `--softness`, `--save out.wav`. |
@@ -148,6 +150,7 @@ The emergency number and the crisis helpline are settings at the top of `safety_
 
 ```bash
 python test_safety.py   # 68 checks: messages that must trigger the gate, normal ones that must not, guard behaviour
+python test_activation.py   # 15 checks: wake phrases, negations, sleep phrases, the awake/asleep session
 python test_speech.py   # sentence buffer, speech queue, voice shaping, guard-in-the-stream (plus real synthesis if the Kokoro model is present)
 ```
 

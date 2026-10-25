@@ -35,7 +35,15 @@ def speak_stream(tokens, say, show=print, guard=True):
     guard=False is ONLY for the fixed gate replies, which contain a phone number on purpose.
     Returns a dict describing what happened."""
     buf = SentenceBuffer(split_on_commas=SPLIT_ON_COMMAS)
-    stats = {"spoken": 0, "removed": [], "first_sentence_at": None}
+    stats = {"spoken": 0, "removed": [], "first_sentence_at": None, "sentences": []}
+
+    def emit(sentence):
+        """Show a sentence, speak it, and remember it (the live loop keeps it as chat history)."""
+        if stats["first_sentence_at"] is None:
+            stats["first_sentence_at"] = time.perf_counter()
+        show(sentence)
+        say(speakable(sentence))
+        stats["sentences"].append(sentence)
 
     def handle(sentence):
         """Returns False when we should stop reading the stream."""
@@ -47,10 +55,7 @@ def speak_stream(tokens, say, show=print, guard=True):
             if reason:
                 stats["removed"].append((reason, sentence))
                 return True
-        if stats["first_sentence_at"] is None:
-            stats["first_sentence_at"] = time.perf_counter()
-        show(sentence)
-        say(speakable(sentence))
+        emit(sentence)
         stats["spoken"] += 1
         return not (guard and stats["spoken"] >= MAX_SENTENCES)
 
@@ -69,20 +74,20 @@ def speak_stream(tokens, say, show=print, guard=True):
 
     if guard:
         if stats["spoken"] == 0:
-            show(SAFE_FALLBACK)
-            say(SAFE_FALLBACK)
+            emit(SAFE_FALLBACK)
         elif any(r in DETAIL_REASONS for r, _ in stats["removed"]):
-            show(DETAIL_NOTE)
-            say(DETAIL_NOTE)
+            emit(DETAIL_NOTE)
     return stats
 
 
-def model_tokens(user_text, marks):
-    """Stream the answer from the Ollama model, recording when the first token arrives."""
+def model_tokens(user_text, marks, history=None):
+    """Stream the answer from the Ollama model, recording when the first token arrives.
+    history: earlier messages [{"role": "user"|"assistant", "content": ...}] so a short reply
+    like "seven" still makes sense."""
     import ollama
     stream = ollama.chat(
         model=MODEL,
-        messages=[{"role": "user", "content": user_text}],      # the Modelfile adds the system prompt
+        messages=list(history or []) + [{"role": "user", "content": user_text}],   # the Modelfile adds the system prompt
         options={"temperature": 0.4, "num_predict": 150},
         stream=True,
     )
