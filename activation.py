@@ -33,6 +33,8 @@ _PATTERNS = [
     ("pain", r"\bi\s+cut\s+(myself|my\s+(finger|hand|arm|leg|foot|toe|thumb|knee|lip|face))\b"),
     ("help", r"\b(i\s+need|please)\s+help\b|\bhelp\s+me\b"),
     ("distress", r"\boh\s+no\b"),
+    ("stress", r"\bi\s*(am|m|feel|have\s+been|been)\s+(so\s+|really\s+|very\s+|quite\s+)?(stressed|overwhelmed|anxious|worried|nervous|upset)\b"
+               r"|\b(so|really)\s+stressed\b"),
     ("name", r"\b(bay\s?max|bay\s?macks?|bay\s?mac)\b"),
 ]
 _COMPILED = [(kind, re.compile(p)) for kind, p in _PATTERNS]
@@ -55,7 +57,7 @@ _NEGATION_INSIDE = re.compile(r"\b(not|no|never|dont|doesnt|didnt|isnt|wasnt|can
 
 @dataclass
 class Trigger:
-    kind: str       # "pain", "help", "distress", "name", "greeting", "attention" or "custom"
+    kind: str       # "pain", "help", "distress", "stress", "name", "greeting", "attention" or "custom"
     phrase: str     # the words that matched
 
 
@@ -115,7 +117,8 @@ def is_health_topic(text):
 # What Baymax says when it wakes up. Short, calm, and always a fixed line.
 # ---------------------------------------------------------------
 OPENINGS = {
-    "pain": "I am here. On a scale of 1 to 10, how would you rate your pain?",
+    "pain": "I am here. Where does it hurt, and what happened?",
+    "stress": "I am here. That sounds hard. What is stressing you out?",
     "distress": "I heard that. Are you hurt? Please tell me what happened.",
     "help": "I am here. Please tell me what is wrong.",
     "name": "Hey! I am here. How are you doing?",
@@ -161,4 +164,64 @@ def is_sleep_phrase(text):
 def is_filler(text):
     """Noise that speech-to-text sometimes invents from silence ('you', 'um')."""
     words = normalize(text).split()
-    return not words or (len(words) == 1 and (words[0] in _FILLERS or len(words[0]) <= 1))
+    if not words:
+        return True
+    w = words[0]
+    return len(words) == 1 and not w.isdigit() and (w in _FILLERS or len(w) <= 1)     # "7" is an answer, not noise
+
+
+# ---------------------------------------------------------------
+# The pain check-in: ask WHAT happened and WHERE, then HOW BAD (1 to 10).
+# These questions are fixed lines (predictable and safe); the model answers afterwards.
+# ---------------------------------------------------------------
+ASK_RATING = "I am sorry you are hurting. On a scale of 1 to 10, how would you rate your pain?"
+ASK_RATING_AGAIN = "Sorry, I did not catch a number. Please say a number from 1 to 10."
+HIGH_PAIN_LINE = ("That sounds like a lot of pain. If it is very strong, sudden, or you feel faint, "
+                  "please get medical help right away or ask someone nearby to help you.")
+HIGH_PAIN_AT = 8
+MIN_CAUSE_WORDS = 3          # "ouch my arm hurts" already says where; plain "ouch" does not
+
+_NUMBER_WORDS = {"zero": 0, "none": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+                 "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_WORD_RE = "|".join(_NUMBER_WORDS)
+_EXPLICIT_RATING = re.compile(rf"\b(\d{{1,2}}|{_WORD_RE})\s*(out\s+of|over|/)\s*(10|ten)\b")
+_ANY_NUMBER = re.compile(rf"\b(\d{{1,2}}|{_WORD_RE})\b")
+
+
+def _to_int(token):
+    return int(token) if token.isdigit() else _NUMBER_WORDS[token]
+
+
+def parse_pain_rating(text, strict=False):
+    """Find a pain rating from 0 to 10 in what the person said ("7", "seven", "about a six", "8 out of 10").
+    strict=True only accepts the explicit forms "7 out of 10" / "7/10", so "since two days" is not a rating."""
+    raw = re.search(r"\b(\d{1,2})\s*/\s*(10|ten)\b", text.lower())      # "5/10": normalize() would drop the slash
+    if raw:
+        n = int(raw.group(1))
+        return n if 0 <= n <= 10 else None
+    norm = normalize(text)
+    m = _EXPLICIT_RATING.search(norm)
+    if m:
+        n = _to_int(m.group(1))
+        return n if 0 <= n <= 10 else None
+    if strict:
+        return None
+    if re.search(r"\bno\s+pain\b|\bnot\s+(really\s+)?(hurting|painful)\b", norm):
+        return 0
+    for m in _ANY_NUMBER.finditer(norm):
+        n = _to_int(m.group(1))
+        if 0 <= n <= 10:
+            return n
+    return None
+
+
+def has_cause(text, trigger_phrase=""):
+    """Does the wake-up message already say what hurts or what happened?"""
+    rest = normalize(text).replace(normalize(trigger_phrase), " ") if trigger_phrase else normalize(text)
+    return len(rest.split()) >= MIN_CAUSE_WORDS
+
+
+def is_scale_question(sentence):
+    """The model was trained to ask for a pain rating. Once we already have one, drop that sentence."""
+    return bool(re.search(r"\bscale\s+of\s+1\s+to\s+10\b|\b(rate|rating)\b.*\bpain\b|\bpain\b.*\b(rate|rating)\b",
+                          normalize(sentence)))

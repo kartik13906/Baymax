@@ -29,10 +29,11 @@ SPLIT_ON_COMMAS = False        # see the note in sentence_buffer.py before chang
 DETAIL_REASONS = {"number", "number word", "frequency", "medicine or test"}
 
 
-def speak_stream(tokens, say, show=print, guard=True):
+def speak_stream(tokens, say, show=print, guard=True, drop=None):
     """Read streamed text pieces, speak complete sentences.
     tokens: any iterable of strings.   say(text): speaks a sentence.   show(text): prints it.
     guard=False is ONLY for the fixed gate replies, which contain a phone number on purpose.
+    drop(sentence) -> True silently skips a sentence (used to skip a repeated pain-scale question).
     Returns a dict describing what happened."""
     buf = SentenceBuffer(split_on_commas=SPLIT_ON_COMMAS)
     stats = {"spoken": 0, "removed": [], "first_sentence_at": None, "sentences": []}
@@ -49,6 +50,8 @@ def speak_stream(tokens, say, show=print, guard=True):
         """Returns False when we should stop reading the stream."""
         sentence = strip_formatting(sentence)
         if not sentence:
+            return True
+        if drop and drop(sentence):
             return True
         if guard:
             reason = check_sentence(sentence)

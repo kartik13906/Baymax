@@ -26,8 +26,9 @@ import queue
 import sys
 import time
 
-from activation import (FRIEND_SYSTEM, SLEEP_LINE, TriggerDetector, is_filler, is_health_topic, is_sleep_phrase,
-                        opening_line)
+from activation import (ASK_RATING, ASK_RATING_AGAIN, FRIEND_SYSTEM, HIGH_PAIN_AT, HIGH_PAIN_LINE, SLEEP_LINE,
+                        TriggerDetector, has_cause, is_filler, is_health_topic, is_scale_question, is_sleep_phrase,
+                        opening_line, parse_pain_rating)
 from safety_gate import check_message
 
 SLEEPING, ACTIVE = "sleeping", "active"
@@ -45,7 +46,7 @@ class Session:
 
     def __init__(self, reply, say_fixed, detector=None, idle_seconds=IDLE_SECONDS,
                  clock=time.monotonic, log=print):
-        self.reply = reply                   # reply(text, history, mode) -> list of sentences spoken
+        self.reply = reply                   # reply(text, history, mode, skip_scale) -> list of sentences spoken
         self.say_fixed = say_fixed           # say_fixed(text): speak a pre-written line
         self.detector = detector or TriggerDetector()
         self.idle_seconds = idle_seconds
@@ -54,6 +55,9 @@ class Session:
         self.state = SLEEPING
         self.mode = CARE
         self.care_hold = 0                   # turns left in which short follow-ups still count as health talk
+        self.intake = None                   # pain check-in: None, "cause" (what/where?) or "rating" (how bad?)
+        self.cause = ""                      # what the person said hurts / happened
+        self.rating_tries = 0
         self.history = []
         self.last_heard = 0.0
 
@@ -72,6 +76,7 @@ class Session:
         self.state = SLEEPING
         self.history = []
         self.care_hold = 0
+        self.intake, self.cause, self.rating_tries = None, "", 0
 
     def _route(self, text, trig=None):
         """Pick the mode for THIS message. Health words -> CARE (local model only), and CARE stays on
@@ -88,6 +93,41 @@ class Session:
         if self.state == ACTIVE and self.clock() - self.last_heard > self.idle_seconds:
             self.log("   [no voice for a while: Baymax went back to sleep]")
             self._sleep()
+
+    def _check_in(self, text):
+        """Pain check-in. Step 1 'cause': what hurts / what happened. Step 2 'rating': how bad, 1 to 10."""
+        self.mode, self.care_hold = CARE, CARE_HOLD_TURNS
+        if self.intake == "cause":
+            self.cause = text
+            rating = parse_pain_rating(text, strict=True)    # they may have said "my arm, 7 out of 10" already
+            if rating is None:
+                self.intake = "rating"
+                self.say_fixed(ASK_RATING)
+                self._remember(text, ASK_RATING)
+                return "intake"
+            return self._finish_check_in(rating)
+        rating = parse_pain_rating(text)
+        if rating is None and self.rating_tries == 0:
+            self.rating_tries = 1                            # one polite retry, then carry on without a number
+            self.say_fixed(ASK_RATING_AGAIN)
+            self._remember(text, ASK_RATING_AGAIN)
+            return "intake"
+        return self._finish_check_in(rating)
+
+    def _finish_check_in(self, rating):
+        """We know what happened and how bad it is. Tell the model, so it does not ask again."""
+        cause = self.cause.strip().rstrip(".")
+        self.intake, self.rating_tries = None, 0
+        if rating is None:
+            prompt = f"I am in pain. {cause}."
+        else:
+            prompt = f"I am in pain. {cause}. My pain is {rating} out of 10."
+        if rating is not None and rating >= HIGH_PAIN_AT:
+            self.say_fixed(HIGH_PAIN_LINE)
+        sentences = self.reply(prompt, list(self.history), CARE, True)
+        self._remember(prompt, " ".join(sentences) if sentences else "")
+        self.last_heard = self.clock()
+        return "reply"
 
     # -- the one entry point ------------------------------------
     def handle(self, text):
@@ -113,6 +153,13 @@ class Session:
             self._route(text, trig)
             self._wake()
             line = opening_line(trig.kind)
+            if trig.kind == "pain":
+                if has_cause(text, trig.phrase):               # "ouch my arm hurts": we know where already
+                    self.cause = text
+                    line = ASK_RATING
+                    self.intake = "rating"
+                else:
+                    self.intake = "cause"
             self.say_fixed(line)
             self._remember(text, line)
             return "woke"
@@ -123,6 +170,8 @@ class Session:
             self.say_fixed(SLEEP_LINE)
             self._sleep()
             return "sleep"
+        if self.intake:
+            return self._check_in(text)
         self._route(text, self.detector.check(text))         # pain or health talk mid-chat: back to the local model
         sentences = self.reply(text, list(self.history), self.mode)
         self._remember(text, " ".join(sentences) if sentences else "")
@@ -192,7 +241,7 @@ def make_session(args):
             source["name"] = "local"
             yield from model_tokens(text, marks, plain(history), system=FRIEND_SYSTEM, temperature=0.7)
 
-    def reply(text, history, mode=CARE):
+    def reply(text, history, mode=CARE, skip_scale=False):
         start_timer()
         marks, t0, source = {}, time.perf_counter(), {"name": "local"}
         friend = mode == FRIEND
@@ -201,7 +250,7 @@ def make_session(args):
         else:
             tokens = model_tokens(text, marks, plain(history), system=FRIEND_SYSTEM if friend else None,
                                   temperature=0.7 if friend else 0.4)
-        stats = speak_stream(tokens, say, show=show)
+        stats = speak_stream(tokens, say, show=show, drop=is_scale_question if skip_scale else None)
         for reason, sentence in stats["removed"]:
             print(f"   [guard removed ({reason}): {sentence}]")
         wait()
