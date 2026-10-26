@@ -11,6 +11,7 @@ This is an independent fan project inspired by the fictional character Baymax. I
 - **Persona model.** Qwen2.5-1.5B-Instruct fine-tuned with QLoRA to answer in short, kind sentences, ask for a 1-10 pain rating only when the person describes pain, suggest seeing a doctor, and avoid medicine names and doses.
 - **Safety gate** (`safety_gate.py`). Plain rules, no language model. Checks the user's message first and replies with a fixed, pre-written answer for emergencies (chest pain, trouble breathing, stroke signs, heavy bleeding, and more), self-harm and crisis messages, and requests to diagnose a serious disease.
 - **Output guard** (`output_guard.py`). Checks every sentence the model produces and drops those containing numbers, medicine names, schedules or promises it cannot keep (like "I will keep monitoring you"). It also removes markdown and emojis so the text sounds right when spoken.
+- **Wake phrases and two modes** (`activation.py`, `baymax_live.py`). Baymax sleeps until it hears a pain or help phrase ("ouch", "it hurts", "oh no", "I need help") or a greeting ("hi", "hey Baymax", "can we talk"). Pain phrases start the careful *care* mode. Greetings start a casual *friend* mode that talks like a friend; mentioning pain switches back to care mode. The safety gate wakes it in either case.
 - **Voice in.** Microphone, Silero VAD, then Faster-Whisper (`distil-medium.en`).
 - **Voice out.** Kokoro-82M with adjustable pitch, softness and voice blending, fed by a sentence buffer so speech starts while the model is still writing.
 
@@ -52,7 +53,8 @@ This is an independent fan project inspired by the fictional character Baymax. I
 | Training | `prepare_dataset.py`, `train_qlora.py` |
 | Evaluation and export | `test_adapter.py`, `merge_adapter.py`, `Modelfile` |
 | Safety | `safety_gate.py`, `output_guard.py`, `test_safety.py`, `baymax_chat.py` |
-| Wake phrases | `activation.py`, `baymax_live.py`, `test_activation.py` |
+| Wake phrases and chat modes | `activation.py`, `baymax_live.py`, `test_activation.py` |
+| Friend-chat data | `friend_data.py` (writes `baymax_friend.jsonl`), `test_friend.py`, `test_adapter_paths.py` |
 | Voice | `listen.py`, `sentence_buffer.py`, `speak.py`, `voice_lab.py`, `baymax_speak.py`, `test_speech.py` |
 
 Trained adapters, GGUF files and downloaded models are **not** in the repository (they are large). The steps below rebuild them.
@@ -105,10 +107,11 @@ Each step prints what it did. Run them in order from the project folder with the
 2. **Rewrite answers in the Baymax voice.** Run `ollama pull qwen2.5:7b`, then `python persona.py 1500` (hours; safe to stop and rerun, finished rows are skipped). Writes `baymax_data.jsonl`. Tip: run it with `nohup` and keep the machine awake.
 3. **Fix the persona data.** `python fix_pain.py` removes the pain-rating question from rows where the person never mentioned pain, and thins out repeated openers. Writes `baymax_data_v2.jsonl`.
 4. **Finalize.** `python finalize_data.py` drops answers with invented numbers or false promises and adds about 50 hand-written examples for dose requests, diagnosis requests, off-topic questions, crisis messages and emergencies. Writes `baymax_final.jsonl`.
-5. **Format for training.** `python prepare_dataset.py` converts rows to ChatML with the Qwen tokenizer, repeats the hand-written behaviour examples three times, prints token-length statistics, and writes `train.jsonl` and `eval.jsonl`.
-6. **Train.** Stop any model Ollama has loaded (`ollama ps`, then `ollama stop <name>`) so the GPU is free. Set `OUT_DIR` at the top of `train_qlora.py` (and make `output_dir=OUT_DIR` inside `SFTConfig`), then run `python train_qlora.py`. About 8 minutes on a 6 GB card. Settings: 4-bit NF4, LoRA rank 16, alpha 32, learning rate 2e-4, 2 epochs.
-7. **Test the adapter.** `python test_adapter.py outputs/<your-run>` answers a set of prompts, including ones worded differently from the training data, with and without the adapter so you can see what changed.
-8. **Export to Ollama.**
+5. **Friend chat data.** `python friend_data.py` checks 155 hand-written casual conversations against the output guard and writes `baymax_friend.jsonl`.
+6. **Format for training.** `python prepare_dataset.py` converts rows to ChatML with the Qwen tokenizer, trains the friend rows under the friend system prompt (`activation.FRIEND_SYSTEM`), repeats the hand-written rows, prints token-length statistics, and writes `train.jsonl` and `eval.jsonl`.
+7. **Train.** Stop any model Ollama has loaded (`ollama ps`, then `ollama stop <name>`) so the GPU is free. Set `OUT_DIR` at the top of `train_qlora.py` (and make `output_dir=OUT_DIR` inside `SFTConfig`), then run `python train_qlora.py`. About 8 minutes on a 6 GB card. Settings: 4-bit NF4, LoRA rank 16, alpha 32, learning rate 2e-4, 2 epochs.
+8. **Test the adapter.** `python test_adapter.py outputs/<your-run>` (care mode) and `python test_friend.py outputs/<your-run>` (friend mode) answer a set of prompts, including ones worded differently from the training data, with and without the adapter so you can see what changed.
+9. **Export to Ollama.**
    ```bash
    python merge_adapter.py outputs/<your-run>
    git clone --depth 1 https://github.com/ggml-org/llama.cpp
@@ -150,7 +153,7 @@ The emergency number and the crisis helpline are settings at the top of `safety_
 
 ```bash
 python test_safety.py   # 68 checks: messages that must trigger the gate, normal ones that must not, guard behaviour
-python test_activation.py   # 15 checks: wake phrases, negations, sleep phrases, the awake/asleep session
+python test_activation.py   # 17 checks: wake phrases, negations, sleep phrases, the awake/asleep session
 python test_speech.py   # sentence buffer, speech queue, voice shaping, guard-in-the-stream (plus real synthesis if the Kokoro model is present)
 ```
 
@@ -158,6 +161,7 @@ When you find a message the gate should have caught (or wrongly caught), add it 
 
 ## Known limitations
 
+- Friend mode relies on 155 hand-written examples plus a system prompt; a 1.5B model can still ramble or repeat itself in long chats.
 - The model was trained on roughly 800 synthetic examples. It learned a **style**, not medicine.
 - In early tests it gave wrong facts (for example, incorrect insulin storage advice) and falsely reassuring answers to serious-disease questions before the diagnosis rule existed. The gate and guard exist because of this.
 - The gate is keyword-based and will miss things. Treat it as a safety net, not a guarantee.
