@@ -80,15 +80,17 @@ def speak_stream(tokens, say, show=print, guard=True):
     return stats
 
 
-def model_tokens(user_text, marks, history=None):
+def model_tokens(user_text, marks, history=None, system=None, temperature=0.4):
     """Stream the answer from the Ollama model, recording when the first token arrives.
     history: earlier messages [{"role": "user"|"assistant", "content": ...}] so a short reply
-    like "seven" still makes sense."""
+    like "seven" still makes sense.
+    system: replaces the Modelfile's system prompt for this call (used for the casual "friend" mode)."""
     import ollama
     stream = ollama.chat(
         model=MODEL,
-        messages=list(history or []) + [{"role": "user", "content": user_text}],   # the Modelfile adds the system prompt
-        options={"temperature": 0.4, "num_predict": 150},
+        messages=([{"role": "system", "content": system}] if system else [])
+                 + list(history or []) + [{"role": "user", "content": user_text}],   # no system: the Modelfile's is used
+        options={"temperature": temperature, "num_predict": 150},
         stream=True,
     )
     for chunk in stream:

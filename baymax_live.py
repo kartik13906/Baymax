@@ -26,10 +26,13 @@ import queue
 import sys
 import time
 
-from activation import SLEEP_LINE, TriggerDetector, is_filler, is_sleep_phrase, opening_line
+from activation import FRIEND_SYSTEM, SLEEP_LINE, TriggerDetector, is_filler, is_sleep_phrase, opening_line
 from safety_gate import check_message
 
 SLEEPING, ACTIVE = "sleeping", "active"
+CARE, FRIEND = "care", "friend"      # care = gentle health helper, friend = casual chat
+CARE_KINDS = {"pain", "distress", "help"}
+
 IDLE_SECONDS = 30          # active this long without hearing you -> back to sleep
 HISTORY_MESSAGES = 6       # remember the last 3 exchanges, no more (the model is small)
 
@@ -40,13 +43,14 @@ class Session:
 
     def __init__(self, reply, say_fixed, detector=None, idle_seconds=IDLE_SECONDS,
                  clock=time.monotonic, log=print):
-        self.reply = reply                   # reply(text, history) -> list of sentences spoken
+        self.reply = reply                   # reply(text, history, mode) -> list of sentences spoken
         self.say_fixed = say_fixed           # say_fixed(text): speak a pre-written line
         self.detector = detector or TriggerDetector()
         self.idle_seconds = idle_seconds
         self.clock = clock
         self.log = log
         self.state = SLEEPING
+        self.mode = CARE
         self.history = []
         self.last_heard = 0.0
 
@@ -88,6 +92,7 @@ class Session:
             if trig is None:
                 return "asleep"
             self.log(f"   [wake: {trig.kind} phrase '{trig.phrase}']")
+            self.mode = CARE if trig.kind in CARE_KINDS else FRIEND
             self._wake()
             line = opening_line(trig.kind)
             self.say_fixed(line)
@@ -100,7 +105,10 @@ class Session:
             self.say_fixed(SLEEP_LINE)
             self._sleep()
             return "sleep"
-        sentences = self.reply(text, list(self.history))
+        trig = self.detector.check(text)
+        if trig and trig.kind in CARE_KINDS:                 # pain talk in the middle of a chat: be careful again
+            self.mode = CARE
+        sentences = self.reply(text, list(self.history), self.mode)
         self._remember(text, " ".join(sentences) if sentences else "")
         self.last_heard = self.clock()                       # the clock starts after Baymax finishes talking
         return "reply"
@@ -130,10 +138,13 @@ def make_session(args):
         speak_stream([text + " "], say, guard=False, show=show)
         wait()
 
-    def reply(text, history):
+    def reply(text, history, mode=CARE):
         start_timer()
         marks, t0 = {}, time.perf_counter()
-        stats = speak_stream(model_tokens(text, marks, history), say, show=show)
+        friend = mode == FRIEND
+        tokens = model_tokens(text, marks, history, system=FRIEND_SYSTEM if friend else None,
+                              temperature=0.7 if friend else 0.4)
+        stats = speak_stream(tokens, say, show=show)
         for reason, sentence in stats["removed"]:
             print(f"   [guard removed ({reason}): {sentence}]")
         wait()

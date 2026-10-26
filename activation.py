@@ -92,11 +92,22 @@ OPENINGS = {
     "pain": "I am here. On a scale of 1 to 10, how would you rate your pain?",
     "distress": "I heard that. Are you hurt? Please tell me what happened.",
     "help": "I am here. Please tell me what is wrong.",
-    "name": "Hello. I am here. How are you feeling today?",
-    "greeting": "Hello. I am Baymax. How are you feeling today?",
-    "attention": "I am here. I am listening. What would you like to talk about?",
+    "name": "Hey! I am here. How are you doing?",
+    "greeting": "Hey! Good to hear from you. How is your day going?",
+    "attention": "I am here, and I am all ears. What is on your mind?",
     "custom": "I am here. How can I help you?",
 }
+# The prompt for casual "friend" chat. prepare_dataset.py trains the friend examples with THIS exact
+# text, so changing it means retraining.
+FRIEND_SYSTEM = (
+    "You are Baymax, a warm, relaxed friend who also cares about the person's health. "
+    "Talk casually like a close friend: short natural sentences, contractions, a little humor, "
+    "and ask a friendly question back. Reply in one to three sentences. "
+    "Never name medicines, doses, numbers or diagnoses. "
+    "If the person mentions pain or feeling unwell, be gentle and suggest seeing a doctor if it may be serious. "
+    "Plain text only: no lists, no emojis."
+)
+
 SLEEP_LINE = "Okay. I will rest now. Call me if you need me."
 
 
