@@ -86,6 +86,32 @@ class TriggerDetector:
 
 
 # ---------------------------------------------------------------
+# Is this message about health? Health talk NEVER goes to an online provider: it stays on this
+# computer and is answered by the local care model. The list is deliberately broad: a false
+# alarm only means a casual message is answered locally (safe); a miss would send health talk
+# online (not safe). Add words freely.
+# ---------------------------------------------------------------
+_HEALTH_RE = re.compile(
+    r"\b(fever|feverish|cough\w*|flu|headache|headaches|migraine\w*|nausea|nauseous|vomit\w*|diarrh\w+|dizzy|dizziness|"
+    r"faint\w*|rash|itch\w*|swollen|swelling|bleed\w*|blood|infect\w*|allerg\w*|asthma\w*|diabet\w*|insulin|"
+    r"pressure\s+is\s+high|cholesterol|cancer|tumou?r|pregnan\w*|injur\w*|wound\w*|bruis\w*|fractur\w*|sprain\w*|"
+    r"sick|unwell|symptom\w*|medicine\w*|medication\w*|tablet\w*|pill|pills|dose|doses|dosage|antibiotic\w*|painkiller\w*|"
+    r"doctor\w*|nurse|hospital\w*|clinic|pharmac\w+|diagnos\w+|disease\w*|treatment|surgery|vaccin\w+|prescri\w+|"
+    r"depress\w+|anxiety|panic|suicid\w+|self\s?harm|hopeless|breath\w*|palpitation\w*|cramp\w*|constipat\w+|heartburn|"
+    r"reflux|insomnia|fatigue|pain\w*|ache|aches|aching|hurt|hurts|hurting|sore|burning|numb\w*|tingling|weak|nauseated)\b"
+    r"|\bmy\s+(head|stomach|tummy|chest|throat|back|neck|knee|knees|ankle|leg|legs|arm|arms|hand|hands|foot|feet|eye|eyes|"
+    r"ear|ears|tooth|teeth|heart|skin|belly|joint|joints|shoulder|hip|wrist|finger|toe)\b"
+    r"|\b(feel|feeling|felt)\s+(\w+\s+){0,2}(off|funny|strange|weird|terrible|awful|ill|rough|lousy|bad)\b"
+    r"|\b(cut|burned|burnt|scraped|twisted|sprained)\s+(myself|my)\b"
+)
+
+
+def is_health_topic(text):
+    """True when the message touches on health, symptoms, medicine, injuries or mental health."""
+    return bool(_HEALTH_RE.search(normalize(text)))
+
+
+# ---------------------------------------------------------------
 # What Baymax says when it wakes up. Short, calm, and always a fixed line.
 # ---------------------------------------------------------------
 OPENINGS = {

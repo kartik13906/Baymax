@@ -6,3 +6,4 @@ nohup.out
 llama.cpp/
 outputs/
 models/
+.env

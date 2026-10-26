@@ -7,8 +7,8 @@ Run:   python test_activation.py
 
 import sys
 
-from activation import TriggerDetector, is_filler, is_sleep_phrase
-from baymax_live import ACTIVE, SLEEPING, Session
+from activation import TriggerDetector, is_filler, is_health_topic, is_sleep_phrase
+from baymax_live import ACTIVE, FRIEND, SLEEPING, Session, api_messages
 
 results = []
 
@@ -90,18 +90,44 @@ def _():
     assert not is_filler("seven") and not is_filler("ouch")
 
 
+HEALTH = [
+    "i have a fever", "my stomach feels weird", "i feel dizzy", "which pills should i take", "i think i have the flu",
+    "i've been feeling depressed", "my knee", "can you recommend a doctor", "i feel sick", "i have a rash on my arm",
+    "i cut myself", "my blood pressure", "i'm having panic attacks", "i can't breathe well", "i feel kind of off today",
+    "i have been coughing", "i think i'm allergic to peanuts", "what medicine is good for a cold", "i twisted my ankle",
+]
+NOT_HEALTH = [
+    "hi", "hello baymax", "my day was so boring", "i'm craving something sweet", "tell me a fun fact", "it's cold today",
+    "i got the job", "i'll be back later", "what's your favorite music", "i just finished a big project at work",
+    "can we talk", "i'm so bored", "how was your day", "tell me a joke", "i went for a walk and it was lovely",
+]
+
+
+@check("health topics are recognised (they must stay on this computer)")
+def _():
+    missed = [t for t in HEALTH if not is_health_topic(t)]
+    assert not missed, f"not recognised as health: {missed}"
+
+
+@check("casual chat is not mistaken for health talk")
+def _():
+    wrong = [t for t in NOT_HEALTH if is_health_topic(t)]
+    assert not wrong, f"wrongly health: {wrong}"
+
+
 # ---------------------------------------------------------------
 # Session with fakes
 # ---------------------------------------------------------------
 class Fake:
     def __init__(self, idle=30):
         self.now = 0.0
-        self.fixed, self.replied = [], []
+        self.fixed, self.replied, self.modes = [], [], []
         self.s = Session(self.reply, self.fixed.append, idle_seconds=idle,
                          clock=lambda: self.now, log=lambda *_: None)
 
-    def reply(self, text, history):
+    def reply(self, text, history, mode="care"):
         self.replied.append((text, history))
+        self.modes.append(mode)
         return ["Please rest and drink some water."]
 
 
@@ -184,8 +210,74 @@ def _():
 def _():
     f = Fake()
     assert f.s.handle("hi") == "woke"
-    assert "scale of 1 to 10" not in f.fixed[0] and "how are you feeling" in f.fixed[0].lower()
+    assert "scale of 1 to 10" not in f.fixed[0] and "how is your day" in f.fixed[0].lower()
     assert f.s.handle("I am a bit tired today") == "reply"
+    assert f.modes == ["friend"]
+
+
+@check("friend mode switches to careful mode when pain is mentioned, and 'ouch' starts in careful mode")
+def _():
+    f = Fake()
+    f.s.handle("hi")
+    f.s.handle("what a day")
+    f.s.handle("my back hurts a bit")
+    assert f.modes == ["friend", "care"], f.modes
+    g = Fake()
+    g.s.handle("ouch")
+    g.s.handle("seven")
+    assert g.modes == ["care"]
+
+
+@check("a health word in the middle of a friendly chat switches to care mode")
+def _():
+    f = Fake()
+    f.s.handle("hi")
+    f.s.handle("i feel a bit feverish today")
+    assert f.modes == ["care"], f.modes
+
+
+@check("a greeting that contains health talk wakes in care mode, not friend mode")
+def _():
+    f = Fake()
+    f.s.handle("hi, i have a fever")
+    f.s.handle("since monday")
+    assert f.modes == ["care"], f.modes
+
+
+@check("short follow-ups after health talk stay in care mode for a few turns, then friend mode returns")
+def _():
+    f = Fake()
+    f.s.handle("hi")
+    f.s.handle("my stomach hurts")          # care, hold = 3
+    for t in ["since monday", "a bit worse", "no", "so what are you up to"]:
+        f.s.handle(t)
+    assert f.modes == ["care", "care", "care", "care", "friend"], f.modes
+
+
+@check("what goes online contains ONLY friend-mode turns: no health talk can leak into a later casual message")
+def _():
+    f = Fake()
+    f.s.handle("hi")
+    f.s.handle("i have a bad headache")
+    for t in ["it started yesterday", "ok", "yes", "tell me a joke"]:
+        f.s.handle(t)
+    assert f.modes[-1] == "friend"
+    sent = api_messages("tell me a joke", f.s.history)
+    text = " ".join(m["content"] for m in sent).lower()
+    assert "headache" not in text and "yesterday" not in text, text
+    assert sent[0]["role"] == "system" and sent[-1] == {"role": "user", "content": "tell me a joke"}
+    assert all(set(m) == {"role", "content"} for m in sent)
+
+
+@check("safety-gate replies are never part of what goes online")
+def _():
+    f = Fake()
+    f.s.handle("hi")
+    f.s.handle("i have chest pain and it spreads to my arm")
+    f.s.handle("what a day")
+    f.s.handle("tell me a joke")
+    sent = " ".join(m["content"] for m in api_messages("x", f.s.history)).lower()
+    assert "chest" not in sent and "emergency" not in sent, sent
 
 
 failed = [r for r in results if not r[0]]

@@ -26,7 +26,8 @@ import queue
 import sys
 import time
 
-from activation import FRIEND_SYSTEM, SLEEP_LINE, TriggerDetector, is_filler, is_sleep_phrase, opening_line
+from activation import (FRIEND_SYSTEM, SLEEP_LINE, TriggerDetector, is_filler, is_health_topic, is_sleep_phrase,
+                        opening_line)
 from safety_gate import check_message
 
 SLEEPING, ACTIVE = "sleeping", "active"
@@ -35,6 +36,7 @@ CARE_KINDS = {"pain", "distress", "help"}
 
 IDLE_SECONDS = 30          # active this long without hearing you -> back to sleep
 HISTORY_MESSAGES = 6       # remember the last 3 exchanges, no more (the model is small)
+CARE_HOLD_TURNS = 3        # after health talk, the next few messages ("yes, since Monday") also stay local
 
 
 class Session:
@@ -51,12 +53,15 @@ class Session:
         self.log = log
         self.state = SLEEPING
         self.mode = CARE
+        self.care_hold = 0                   # turns left in which short follow-ups still count as health talk
         self.history = []
         self.last_heard = 0.0
 
     # -- helpers ------------------------------------------------
     def _remember(self, user, assistant):
-        self.history += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
+        # every turn is tagged with its mode, so only FRIEND turns can ever be sent to an online provider
+        self.history += [{"role": "user", "content": user, "mode": self.mode},
+                         {"role": "assistant", "content": assistant, "mode": self.mode}]
         self.history = self.history[-HISTORY_MESSAGES:]
 
     def _wake(self):
@@ -66,6 +71,17 @@ class Session:
     def _sleep(self):
         self.state = SLEEPING
         self.history = []
+        self.care_hold = 0
+
+    def _route(self, text, trig=None):
+        """Pick the mode for THIS message. Health words -> CARE (local model only), and CARE stays on
+        for a few follow-up messages. Everything else -> FRIEND."""
+        if (trig and trig.kind in CARE_KINDS) or is_health_topic(text):
+            self.mode, self.care_hold = CARE, CARE_HOLD_TURNS
+        elif self.care_hold > 0:
+            self.care_hold -= 1                              # mode stays CARE
+        else:
+            self.mode = FRIEND
 
     def expire_if_idle(self):
         """Called before every utterance. Silent drift back to sleep (no speech, it is rude to interrupt)."""
@@ -83,6 +99,7 @@ class Session:
         if gate.triggered:                                   # safety ALWAYS wins, awake or not
             self.log(f"   [gate: {gate.category}. The model was NOT used.]")
             self._wake()
+            self.mode, self.care_hold = CARE, CARE_HOLD_TURNS
             self.say_fixed(gate.message)
             self._remember(text, gate.message)
             return "gate"
@@ -92,7 +109,8 @@ class Session:
             if trig is None:
                 return "asleep"
             self.log(f"   [wake: {trig.kind} phrase '{trig.phrase}']")
-            self.mode = CARE if trig.kind in CARE_KINDS else FRIEND
+            self.care_hold = 0
+            self._route(text, trig)
             self._wake()
             line = opening_line(trig.kind)
             self.say_fixed(line)
@@ -105,13 +123,27 @@ class Session:
             self.say_fixed(SLEEP_LINE)
             self._sleep()
             return "sleep"
-        trig = self.detector.check(text)
-        if trig and trig.kind in CARE_KINDS:                 # pain talk in the middle of a chat: be careful again
-            self.mode = CARE
+        self._route(text, self.detector.check(text))         # pain or health talk mid-chat: back to the local model
         sentences = self.reply(text, list(self.history), self.mode)
         self._remember(text, " ".join(sentences) if sentences else "")
         self.last_heard = self.clock()                       # the clock starts after Baymax finishes talking
         return "reply"
+
+
+# ---------------------------------------------------------------
+# What may leave this computer
+# ---------------------------------------------------------------
+def plain(history):
+    """Messages in the plain {"role", "content"} form that model APIs accept (drops our "mode" tag)."""
+    return [{"role": h["role"], "content": h["content"]} for h in history]
+
+
+def api_messages(text, history):
+    """The ONLY function that builds what is sent to an online provider: the friend prompt, the earlier
+    FRIEND-mode turns, and the new message. Turns tagged CARE (health talk, safety-gate replies) are
+    filtered out here, so they can never be sent online, even in a later casual message."""
+    friend_turns = [h for h in history if h.get("mode") == FRIEND]
+    return [{"role": "system", "content": FRIEND_SYSTEM}] + plain(friend_turns) + [{"role": "user", "content": text}]
 
 
 # ---------------------------------------------------------------
@@ -138,18 +170,43 @@ def make_session(args):
         speak_stream([text + " "], say, guard=False, show=show)
         wait()
 
+    chain = None
+    if getattr(args, "online_friend", False):
+        from llm_backends import build_chain, load_env_file
+        load_env_file()
+        chain = build_chain()
+        print("Online friend chat is ON: casual messages go to an online provider.")
+        print("Health talk, safety replies and anything about pain stay on this computer.")
+        print("Providers:", chain.describe(), "\n")
+
+    def friend_tokens(text, history, marks, source):
+        """Casual chat: try Groq, then OpenRouter, then fall back to the local friend model."""
+        from llm_backends import NoBackendAvailable
+        try:
+            for piece in chain.stream(api_messages(text, history)):
+                marks.setdefault("first_token", time.perf_counter())
+                source["name"] = chain.last_used
+                yield piece
+        except NoBackendAvailable:
+            print("   [no online provider available: using the local model]")
+            source["name"] = "local"
+            yield from model_tokens(text, marks, plain(history), system=FRIEND_SYSTEM, temperature=0.7)
+
     def reply(text, history, mode=CARE):
         start_timer()
-        marks, t0 = {}, time.perf_counter()
+        marks, t0, source = {}, time.perf_counter(), {"name": "local"}
         friend = mode == FRIEND
-        tokens = model_tokens(text, marks, history, system=FRIEND_SYSTEM if friend else None,
-                              temperature=0.7 if friend else 0.4)
+        if friend and chain:
+            tokens = friend_tokens(text, history, marks, source)
+        else:
+            tokens = model_tokens(text, marks, plain(history), system=FRIEND_SYSTEM if friend else None,
+                                  temperature=0.7 if friend else 0.4)
         stats = speak_stream(tokens, say, show=show)
         for reason, sentence in stats["removed"]:
             print(f"   [guard removed ({reason}): {sentence}]")
         wait()
         if marks.get("first_token"):
-            print(f"   [model first token {(marks['first_token'] - t0) * 1000:.0f} ms]")
+            print(f"   [{mode} mode | answered by: {source['name']} | first token {(marks['first_token'] - t0) * 1000:.0f} ms]")
         return stats["sentences"]
 
     return Session(reply, say_fixed, idle_seconds=args.idle), close
@@ -228,6 +285,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--typed", action="store_true", help="type instead of using the microphone")
     ap.add_argument("--no-audio", action="store_true", help="do not load or play the voice")
+    ap.add_argument("--online-friend", action="store_true",
+                    help="use Groq, then OpenRouter, for casual chat (needs API keys; see llm_backends.py)")
     ap.add_argument("--idle", type=float, default=IDLE_SECONDS, help="seconds before it goes back to sleep")
     ap.add_argument("--stt-device", default="cuda", choices=["cuda", "cpu"])
     ap.add_argument("--mic", type=int, default=None)
