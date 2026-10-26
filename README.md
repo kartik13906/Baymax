@@ -41,8 +41,8 @@ This is an independent fan project inspired by the fictional character Baymax. I
 | 2 | Data cleaning, persona data, QLoRA training, export to Ollama | Done |
 | 3 | Listening (VAD + Whisper) and speaking (sentence buffer + Kokoro) | Done as separate scripts |
 | 4 | Safety gate and output guard | Done |
-| 4 | Short-term memory (SQLite: name, allergies, recent pain ratings) | Not started |
-| 5 | One async program, end-to-end latency benchmarks | Not started |
+| 5 | Short-term memory (SQLite: name, allergies, recent pain ratings) | Not started |
+| 6 | One async program, end-to-end latency benchmarks | Not started |
 
 ## Repository layout
 
