@@ -9,6 +9,7 @@ import sys
 
 from activation import TriggerDetector, is_filler, is_health_topic, is_sleep_phrase
 from baymax_live import ACTIVE, FRIEND, SLEEPING, Session, api_messages
+from remedies import ENTRIES, check_entries, find_remedy, with_remedy
 
 results = []
 
@@ -343,6 +344,55 @@ def _():
     f.s.handle("tell me a joke")
     sent = " ".join(m["content"] for m in api_messages("x", f.s.history)).lower()
     assert "chest" not in sent and "emergency" not in sent, sent
+
+
+@check("the remedy list is clean: guard-safe sentences, no medicines, every example finds its own entry")
+def _():
+    problems = check_entries()
+    assert not problems, problems
+    assert len(ENTRIES) >= 40
+
+
+@check("remedy lookup: right entry for causes and questions, nothing for small talk")
+def _():
+    cases = {"i slammed my finger in the car door": "finger_door", "i bumped my head on a shelf": "head_bump",
+             "any home remedy for a sore throat?": "sore_throat", "i burned my hand on the stove": "burn",
+             "my period cramps are bad": "period", "i got a cramp in my leg": "cramp", "i have a nosebleed": "nosebleed",
+             "hello there": None, "tell me a joke": None, "it's cold today": None, "what's your favorite food": None}
+    for text, key in cases.items():
+        found = find_remedy(text)
+        assert (found["key"] if found else None) == key, (text, found and found["key"])
+
+
+@check("the check-in hands the model the matching remedy, but history keeps only the plain message")
+def _():
+    f = Fake()
+    f.s.handle("ouch")
+    f.s.handle("i burned my hand on the stove")
+    f.s.handle("six")
+    sent = f.replied[0][0]
+    assert "6 out of 10" in sent and "Remedies you may share" in sent and "cool running water" in sent, sent
+    assert "Remedies you may share" not in " ".join(h["content"] for h in f.s.history), f.s.history
+
+
+@check("a health question in care mode also gets its remedy; a casual one never does")
+def _():
+    f = Fake()
+    f.s.handle("hi")
+    f.s.handle("tell me a joke")
+    f.s.handle("what can i do at home for a sore throat?")
+    assert "Remedies you may share" not in f.replied[0][0]
+    assert "Remedies you may share" in f.replied[1][0] and "pinch of salt" in f.replied[1][0]
+
+
+@check("no remedy on the list: the message goes to the model unchanged (nothing invented)")
+def _():
+    f = Fake()
+    f.s.handle("ouch")
+    f.s.handle("my armpit hurts")
+    f.s.handle("five")
+    assert "Remedies you may share" not in f.replied[0][0]
+    assert with_remedy("hello") == "hello"
 
 
 failed = [r for r in results if not r[0]]

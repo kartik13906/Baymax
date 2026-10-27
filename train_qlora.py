@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
-OUT_DIR = "outputs/baymax-lora-v5"
+OUT_DIR = "outputs/baymax-lora-v6"
 MAX_LEN = 512                                # lower to 384 if you hit out-of-memory
 
 # bf16 needs an Ampere-or-newer GPU (RTX 30xx+); older cards fall back to fp16.
@@ -75,7 +75,7 @@ data = data.map(to_prompt_completion, remove_columns=["messages"])
 #    Effective batch = 2 x 8 = 16 examples per optimizer step.
 # ---------------------------------------------------------------
 args = SFTConfig(
-    output_dir="outputs/baymax-lora-v5",
+    output_dir="outputs/baymax-lora-v6",
     num_train_epochs=2,
     per_device_train_batch_size=2,       # if out-of-memory: 1 (and set accumulation to 16)
     per_device_eval_batch_size=2,

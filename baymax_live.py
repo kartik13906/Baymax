@@ -29,6 +29,7 @@ import time
 from activation import (ASK_RATING, ASK_RATING_AGAIN, FRIEND_SYSTEM, HIGH_PAIN_AT, HIGH_PAIN_LINE, SLEEP_LINE,
                         TriggerDetector, has_cause, is_filler, is_health_topic, is_scale_question, is_sleep_phrase,
                         opening_line, parse_pain_rating)
+from remedies import with_remedy
 from safety_gate import check_message
 
 SLEEPING, ACTIVE = "sleeping", "active"
@@ -124,7 +125,8 @@ class Session:
             prompt = f"I am in pain. {cause}. My pain is {rating} out of 10."
         if rating is not None and rating >= HIGH_PAIN_AT:
             self.say_fixed(HIGH_PAIN_LINE)
-        sentences = self.reply(prompt, list(self.history), CARE, True)
+        # the model gets the matching remedy from remedies.py (if any); history keeps only the plain message
+        sentences = self.reply(with_remedy(prompt, cause), list(self.history), CARE, True)
         self._remember(prompt, " ".join(sentences) if sentences else "")
         self.last_heard = self.clock()
         return "reply"
@@ -173,7 +175,8 @@ class Session:
         if self.intake:
             return self._check_in(text)
         self._route(text, self.detector.check(text))         # pain or health talk mid-chat: back to the local model
-        sentences = self.reply(text, list(self.history), self.mode)
+        model_text = with_remedy(text) if self.mode == CARE else text      # remedies are looked up locally, in care mode only
+        sentences = self.reply(model_text, list(self.history), self.mode)
         self._remember(text, " ".join(sentences) if sentences else "")
         self.last_heard = self.clock()                       # the clock starts after Baymax finishes talking
         return "reply"
