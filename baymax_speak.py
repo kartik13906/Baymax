@@ -29,14 +29,15 @@ SPLIT_ON_COMMAS = False        # see the note in sentence_buffer.py before chang
 DETAIL_REASONS = {"number", "number word", "frequency", "medicine or test"}
 
 
-def speak_stream(tokens, say, show=print, guard=True, drop=None):
+def speak_stream(tokens, say, show=print, guard=True, drop=None, fast_first=False):
     """Read streamed text pieces, speak complete sentences.
     tokens: any iterable of strings.   say(text): speaks a sentence.   show(text): prints it.
     guard=False is ONLY for the fixed gate replies, which contain a phone number on purpose.
     drop(sentence) -> True silently skips a sentence (used to skip a repeated pain-scale question).
     Returns a dict describing what happened."""
-    buf = SentenceBuffer(split_on_commas=SPLIT_ON_COMMAS)
-    stats = {"spoken": 0, "removed": [], "first_sentence_at": None, "sentences": []}
+    # fast_first only for guarded model replies: fixed lines are pre-rendered per sentence and must not be re-split
+    buf = SentenceBuffer(split_on_commas=SPLIT_ON_COMMAS, first_clause_only=bool(fast_first and guard))
+    stats = {"spoken": 0, "clauses": 0, "removed": [], "first_sentence_at": None, "sentences": []}
 
     def emit(sentence):
         """Show a sentence, speak it, and remember it (the live loop keeps it as chat history)."""
@@ -60,7 +61,9 @@ def speak_stream(tokens, say, show=print, guard=True, drop=None):
                 return True
         emit(sentence)
         stats["spoken"] += 1
-        return not (guard and stats["spoken"] >= MAX_SENTENCES)
+        if sentence.endswith(","):
+            stats["clauses"] += 1                                   # an early first clause is not a whole sentence
+        return not (guard and stats["spoken"] - stats["clauses"] >= MAX_SENTENCES)
 
     keep_going = True
     for piece in tokens:

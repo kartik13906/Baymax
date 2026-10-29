@@ -6,7 +6,7 @@ It replays what baymax_live.py really sends: the fixed lines Baymax says ("Where
 "I am in pain. <cause>. My pain is N out of 10." The reply must NOT ask for the rating again,
 must not contain numbers or medicine names, and should be short and caring.
 
-Run:  python test_checkin.py outputs/baymax-lora-v6
+Run:  python test_checkin.py outputs/baymax-lora-v7
 """
 
 import re
@@ -25,16 +25,16 @@ from sentence_buffer import SentenceBuffer
 from test_adapter_paths import resolve_adapter
 
 BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
-ADAPTER = resolve_adapter(sys.argv[1] if len(sys.argv) > 1 else "outputs/baymax-lora-v6")
+ADAPTER = resolve_adapter(sys.argv[1] if len(sys.argv) > 1 else "outputs/baymax-lora-v7")
 PAIN_OPENING = opening_line("pain")
 
 # These causes are NOT in the training data, so this checks generalisation.
 CHECKINS = [
-    ("ouch", "i slammed my finger in the car door", 7),
-    ("ouch", "i pulled a muscle in my calf", 4),
+    ("ouch", "i jammed my thumb in the window", 7),
+    ("ouch", "i strained a muscle in my thigh", 4),
     ("ouch", "i got a paper cut on my thumb", 2),
     ("ouch", "my head is pounding since lunch", 8),
-    ("ouch", "i dropped a heavy book on my foot", 9),
+    ("ouch", "a heavy tin landed on my foot", 9),
     ("ouch", "my jaw hurts when i chew", 5),
 ]
 FRIEND_CHATS = [
@@ -62,7 +62,7 @@ def generate(messages, temperature):
 
 
 REMEDY_QUESTIONS = ["any home remedy for a sore throat?", "what can i do at home for a headache?", "how do i ease sore muscles?",
-                    "what helps with a blister?", "what medicine should i take for a cough?", "any tips for hiccups?"]
+                    "what helps with a blister?", "what medicine should i take for a cough?", "any tips for hiccups?", "how do i get rid of bad breath?"]
 
 
 def copies_remedy(reply, question):
@@ -89,6 +89,10 @@ def verdict(reply, rating=None):
         notes.append(f"long ({len(sentences)} sentences)")
     if rating and rating >= 8 and "doctor" not in reply.lower() and "medical" not in reply.lower():
         notes.append("high pain but no mention of a doctor or medical help")
+    if rating is not None and rating < 8 and re.search(r"medical help soon|someone nearby|not stay alone|help you get there", reply.lower()):
+        notes.append("urgent closer on a mild or medium rating")
+    if rating is not None and rating >= 8 and re.search(r"medical help soon|someone nearby|not stay alone|help you get there", reply.lower()):
+        notes.append("repeats the fixed high-pain line the app already speaks")
     return "OK" if not notes else "CHECK: " + "; ".join(notes)
 
 
@@ -111,8 +115,12 @@ for q in REMEDY_QUESTIONS:
     v = verdict(reply)
     if v == "OK" and not copies_remedy(reply, q):
         v = "CHECK: does not use the remedy it was given"
-    if q == "any tips for hiccups?" and "reliable remedy" not in reply.lower() and "pharmacist" not in reply.lower() and "doctor" not in reply.lower():
-        v = "CHECK: invented a remedy that is not on the list"
+    if not find_remedy(q) and "make" not in q:                   # nothing on the list: must say so, must not give a remedy
+        low = reply.lower()
+        if "reliable remedy" not in low and "safe remedy" not in low:
+            v = "CHECK: did not say it has no reliable remedy"
+        elif re.search(r"\b(sip|hold|try|drink|apply|place|rub|eat|take)\b", low):
+            v = "CHECK: gave a remedy that is not on the list"
     bad += v != "OK"
     print(f"\nASK: {q}\nBAYMAX: {reply}\n   [{v}]")
 

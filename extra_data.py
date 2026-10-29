@@ -1,5 +1,5 @@
 """
-extra_data.py - targeted training rows for v6: the pain check-in, multi-turn friend chat, and
+extra_data.py - targeted training rows for v7: the pain check-in, multi-turn friend chat, and
 more ways of asking for doses and diagnoses.
 
     python extra_data.py         # checks every reply and writes baymax_extra.jsonl
@@ -45,13 +45,12 @@ PAIN_OPENING = opening_line("pain")          # "I am here. Where does it hurt, a
 EMPATHY = ["I am sorry you are hurting.", "That sounds uncomfortable, and I am sorry.", "I am sorry that happened to you.",
            "Oh no, I am sorry to hear that.", "That does not sound nice at all."]
 HIGH_OPEN = ["That sounds really painful.", "I am so sorry, that sounds like a lot of pain.", "That sounds very hard to bear."]
-HIGH_CLOSE = ["Please get medical help soon, and ask someone nearby to stay with you.",
-              "Please see a doctor as soon as you can, and do not stay alone with it.",
-              "Please get it checked by a doctor today, and ask someone to help you get there."]
+# No HIGH_CLOSE any more: for ratings of 8 and up baymax_live.py speaks the fixed HIGH_PAIN_LINE itself,
+# so the model never has to (v6 leaked that urgent closer into mild-pain replies).
 LEADS = ["Here are some gentle things that can help.", "Happy to help. Here is what usually helps.",
          "Here are a few things you can try at home.", "Here is what can help."]
 QUESTIONS = ["what can i do at home for {q}?", "any home remedy for {q}?", "how do i ease {q}?", "what helps with {q}?"]
-LOW_RATINGS = [2, 3, 4, 5, 6]
+LOW_RATINGS = [2, 3, 4, 5, 6, 7]       # 7 is still "below HIGH_PAIN_AT": no urgent closer
 HIGH_RATINGS = [8, 9, 10]
 MEDICINE_ENTRIES = {"headache", "sore_throat", "cough", "stomach", "period", "back", "toothache", "fever", "cold",
                     "heartburn", "cramp", "sore_muscles", "joint", "ear", "nausea", "diarrhea", "constipation",
@@ -81,7 +80,7 @@ def remedy_checkin_rows():
                     reply = f"{EMPATHY[n % len(EMPATHY)]} {e['remedy']} {e['see']}"
                 else:
                     rating = HIGH_RATINGS[n % len(HIGH_RATINGS)]
-                    reply = f"{HIGH_OPEN[n % len(HIGH_OPEN)]} {first_sentence(e['remedy'])} {e['see']} {HIGH_CLOSE[n % len(HIGH_CLOSE)]}"
+                    reply = f"{HIGH_OPEN[n % len(HIGH_OPEN)]} {first_sentence(e['remedy'])} {e['see']}"
                 prompt = f"I am in pain. {cause}. My pain is {rating} out of 10."
                 rows.append({"kind": "remedy_checkin", "system": "care", "turns": checkin_turns(first, cause, prompt, reply)})
     # no number understood: the bot sends the cause alone
@@ -115,8 +114,15 @@ def remedy_question_rows():
 NO_MATCH_CAUSES = ["my elbow hurts after hitting it on a door", "my hair hurts when i brush it", "my lip hurts after a fall",
                    "my chin hurts after i bumped it", "my armpit hurts", "my gums are sore", "my hand hurts after clapping",
                    "my thigh hurts after the match"]
-NO_MATCH_QUESTIONS = ["what home remedy works for hiccups?", "any tips for motion sickness?", "how do i get rid of dandruff?",
-                      "what helps with a dry mouth?", "how do i stop snoring?"]
+# Topics that are NOT in remedies.py. 'hiccups' and 'bad breath' are held out on purpose: test_checkin.py uses them
+# to check the model says 'no reliable remedy' for things it never saw.
+NO_MATCH_TOPICS = ['motion sickness', 'dandruff', 'a dry mouth', 'snoring', 'a hangover', 'chapped lips', 'dry skin', 'ringing in the ears', 'bad dreams', 'cold hands', 'puffy eyes', 'a twitching eye', 'sweaty palms', 'tight shoes', 'a dry scalp', 'acne', 'brittle nails', 'feeling sleepy in the afternoon', 'restless legs', 'a bitter taste in my mouth', 'a sore tongue', 'dark circles', 'a fear of flying']
+NO_MATCH_TEMPLATES = ["what home remedy works for {t}?", "any tips for {t}?", "how do i get rid of {t}?", "what helps with {t}?"]
+NO_MATCH_REPLIES = [
+    "I do not have a reliable remedy for that, and I would rather not guess. A pharmacist or doctor can advise you properly. Is anything else bothering you?",
+    "I am sorry, I do not have a safe remedy for that on my list. A pharmacist or doctor can give you better advice. Is there anything else I can help with?",
+    "I do not have a reliable remedy for that, and a made-up one could do harm. A doctor or pharmacist can help you with it. Is anything else troubling you?",
+]
 
 
 def no_match_rows():
@@ -129,13 +135,14 @@ def no_match_rows():
                      "If the pain is strong or does not ease, please see a doctor.")
         else:
             rating = HIGH_RATINGS[k % len(HIGH_RATINGS)]
-            reply = f"{HIGH_OPEN[k % len(HIGH_OPEN)]} Please rest the area and keep still. {HIGH_CLOSE[k % len(HIGH_CLOSE)]}"
+            reply = f"{HIGH_OPEN[k % len(HIGH_OPEN)]} Please rest the area and keep still. If the pain is strong or does not ease, please see a doctor."
         prompt = f"I am in pain. {cause}. My pain is {rating} out of 10."
         rows.append({"kind": "remedy_nomatch", "system": "care", "turns": checkin_turns("ouch", cause, prompt, reply)})
-    for q in NO_MATCH_QUESTIONS:
-        assert find_remedy(q) is None, f"'{q}' now matches a remedy: move it out of NO_MATCH_QUESTIONS"
-        rows.append({"kind": "remedy_nomatch", "system": "care", "turns": [q,
-            "I do not have a reliable remedy for that, and I would rather not guess. A pharmacist or doctor can advise you properly. Is anything else bothering you?"]})
+    for k, topic in enumerate(NO_MATCH_TOPICS):
+        for t in (k % 4, (k + 2) % 4):
+            q = NO_MATCH_TEMPLATES[t].format(t=topic)
+            assert find_remedy(q) is None, f"'{q}' now matches a remedy: remove '{topic}' from NO_MATCH_TOPICS"
+            rows.append({"kind": "remedy_nomatch", "system": "care", "turns": [q, NO_MATCH_REPLIES[(k + t) % len(NO_MATCH_REPLIES)]]})
     return rows
 
 

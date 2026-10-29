@@ -100,11 +100,12 @@ _HEALTH_RE = re.compile(
     r"sick|unwell|symptom\w*|medicine\w*|medication\w*|tablet\w*|pill|pills|dose|doses|dosage|antibiotic\w*|painkiller\w*|"
     r"doctor\w*|nurse|hospital\w*|clinic|pharmac\w+|diagnos\w+|disease\w*|treatment|surgery|vaccin\w+|prescri\w+|"
     r"depress\w+|anxiety|panic|suicid\w+|self\s?harm|hopeless|breath\w*|palpitation\w*|cramp\w*|constipat\w+|heartburn|"
-    r"reflux|insomnia|fatigue|pain\w*|ache|aches|aching|hurt|hurts|hurting|sore|burning|numb\w*|tingling|weak|nauseated)\b"
+    r"reflux|insomnia|fatigue|remed\w+|hiccup\w*|snor(e|es|ing)|dandruff|hangover|acne|home\s+cure|pain\w*|ache|aches|aching|hurt|hurts|hurting|sore|burning|numb\w*|tingling|weak|nauseated)\b"
     r"|\bmy\s+(head|stomach|tummy|chest|throat|back|neck|knee|knees|ankle|leg|legs|arm|arms|hand|hands|foot|feet|eye|eyes|"
     r"ear|ears|tooth|teeth|heart|skin|belly|joint|joints|shoulder|hip|wrist|finger|toe)\b"
     r"|\b(feel|feeling|felt)\s+(\w+\s+){0,2}(off|funny|strange|weird|terrible|awful|ill|rough|lousy|bad)\b"
     r"|\b(cut|burned|burnt|scraped|twisted|sprained)\s+(myself|my)\b"
+    r"|\b(motion\s+sickness|bad\s+breath|dry\s+mouth)\b"
 )
 
 

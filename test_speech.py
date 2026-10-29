@@ -127,6 +127,30 @@ def make_queue(fail_on=None):
     return SpeechQueue(synth, play), played
 
 
+@check("a stuck voice does not freeze the program: wait() times out, and the counter never goes negative")
+def _():
+    import threading
+    gate = threading.Event()
+
+    def stuck_synth(text):
+        gate.wait(5)                                   # pretends the voice hangs
+        return np.zeros(100, dtype=np.float32), 24000
+
+    q = SpeechQueue(stuck_synth, play_fn=lambda audio, sr: None)
+    try:
+        q.say("hello")
+        t0 = time.monotonic()
+        assert q.wait(timeout=0.3) is False and time.monotonic() - t0 < 2
+        gate.set()                                     # the voice finally finishes; _done() runs afterwards
+        time.sleep(0.4)
+        assert q._pending == 0, q._pending
+        q.say("again")
+        assert q.wait(timeout=2) is True
+    finally:
+        gate.set()
+        q.close()
+
+
 @check("speech queue plays sentences in order and wait() returns")
 def _():
     q, played = make_queue()

@@ -42,7 +42,8 @@ DIGIT_RE = re.compile(r"\d")
 SCALE_RE = re.compile(r"\b1 to 10\b|\bone to ten\b", re.I)          # the pain question is allowed
 FREQUENCY_RE = re.compile(
     r"\bevery\s+(\w+\s+)?(minute|minutes|hour|hours|day|days|night|nights|week|weeks|month|months)\b"
-    r"|\b(hourly|daily|nightly|weekly|monthly)\b",
+    r"|\b(hourly|daily|nightly|weekly|monthly)\b"
+    r"|\b(once|twice|thrice)\s+(a|per|each)\s+(day|night|week|month|hour)\b",
     re.I,
 )
 

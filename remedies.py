@@ -134,6 +134,10 @@ ENTRIES = [
          aliases=r"\b(joint|joints|arthritis|hip|hips)\b",
          remedy="Please move the joint gently and rest it from heavy use. A warm cloth can ease stiffness, and a wrapped cold pack can ease swelling.",
          see="If the joint is red, hot, very swollen, or you cannot move it, please see a doctor.", urgent=False),
+    dict(key="crush", q="a heavy object landing on the foot", causes=["i dropped a heavy book on my foot", "a box fell on my foot"],
+         aliases=r"\b(dropped|fell\s+on|landed\s+on|crushed)\b.*\b(foot|feet|toe|toes|leg|hand)\b",
+         remedy="Please stop what you are doing, sit down, and keep the foot still and raised. A cold pack wrapped in a cloth for a short while can ease the swelling, and please do not try to walk on it.",
+         see="A heavy knock can break a bone, so please see a doctor today, and get help right away if it looks bent, is badly swollen, or you cannot move it.", urgent=True),
     dict(key="foot", q="foot pain", causes=["my feet hurt from my new shoes", "my heel hurts when i walk"],
          aliases=r"\b(foot|feet|heel|heels)\b",
          remedy="Please sit down, raise your feet, and soak them in lukewarm water. Wear comfortable, roomy shoes for a while.",
@@ -221,6 +225,18 @@ def find_remedy(text):
         if pattern.search(norm):
             return entry
     return None
+
+
+# A person asking for a remedy we do not have. The 1.5B model cannot be trusted to refuse (v7 still invented
+# remedies for hiccups and bad breath), so the app answers this case itself with a fixed line, like the safety gate.
+ASKS_REMEDY_RE = re.compile(r"\b(remed(y|ies)|home\s+cure|tips?\s+(for|on|to)|get\s+rid\s+of|how\s+(do|can|should)\s+i\s+(ease|stop|treat|soothe|relieve|cure|fix)|"
+                            r"what\s+(helps|can\s+i\s+do|should\s+i\s+do)\s+(with|for|about|at\s+home)|what\s+(helps|works)\b|natural\s+way)", re.I)
+NO_REMEDY_LINE = ("I do not have a reliable remedy for that, and I would rather not guess. "
+                  "A pharmacist or doctor can advise you properly. Is anything else bothering you?")
+
+
+def asks_for_remedy(text):
+    return bool(ASKS_REMEDY_RE.search(normalize(text)))
 
 
 def remedy_context(entry):

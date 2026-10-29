@@ -7,3 +7,5 @@ llama.cpp/
 outputs/
 models/
 .env
+baymax_memory.db
+audio_cache/

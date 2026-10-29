@@ -22,6 +22,7 @@ so test_activation.py can test it with fakes.
 """
 
 import argparse
+import re
 import queue
 import sys
 import time
@@ -29,7 +30,7 @@ import time
 from activation import (ASK_RATING, ASK_RATING_AGAIN, FRIEND_SYSTEM, HIGH_PAIN_AT, HIGH_PAIN_LINE, SLEEP_LINE,
                         TriggerDetector, has_cause, is_filler, is_health_topic, is_scale_question, is_sleep_phrase,
                         opening_line, parse_pain_rating)
-from remedies import with_remedy
+from remedies import NO_REMEDY_LINE, asks_for_remedy, find_remedy, with_remedy
 from safety_gate import check_message
 
 SLEEPING, ACTIVE = "sleeping", "active"
@@ -41,18 +42,24 @@ HISTORY_MESSAGES = 6       # remember the last 3 exchanges, no more (the model i
 CARE_HOLD_TURNS = 3        # after health talk, the next few messages ("yes, since Monday") also stay local
 
 
+# "ouch", "it hurts": pain with no place named. ("my stomach hurts" already says where, so it goes straight to the model.)
+BARE_PAIN_RE = re.compile(r"(ouch|ouchie|owie|ow|it|that|this)\b", re.I)
+
+
 class Session:
     """State machine. handle(text) returns a short label saying what happened:
     'ignored', 'asleep', 'woke', 'gate', 'sleep', 'reply'."""
 
     def __init__(self, reply, say_fixed, detector=None, idle_seconds=IDLE_SECONDS,
-                 clock=time.monotonic, log=print):
+                 clock=time.monotonic, log=print, memory=None):
         self.reply = reply                   # reply(text, history, mode, skip_scale) -> list of sentences spoken
         self.say_fixed = say_fixed           # say_fixed(text): speak a pre-written line
         self.detector = detector or TriggerDetector()
         self.idle_seconds = idle_seconds
         self.clock = clock
         self.log = log
+        self.marks = {}                      # per-turn timestamps filled in by the reply functions (see latency.py)
+        self.memory = memory                 # memory.Memory or None: name, allergies, pain log (never leaves this computer)
         self.state = SLEEPING
         self.mode = CARE
         self.care_hold = 0                   # turns left in which short follow-ups still count as health talk
@@ -115,6 +122,18 @@ class Session:
             return "intake"
         return self._finish_check_in(rating)
 
+    def _start_pain_check_in(self, text, trig):
+        """Begin the pain check-in: returns the fixed line to say. 'ouch my arm hurts' already says where."""
+        line = opening_line(trig.kind)
+        if trig.kind == "pain":
+            if has_cause(text, trig.phrase):
+                self.cause = text
+                line = ASK_RATING
+                self.intake = "rating"
+            else:
+                self.intake = "cause"
+        return line
+
     def _finish_check_in(self, rating):
         """We know what happened and how bad it is. Tell the model, so it does not ask again."""
         cause = self.cause.strip().rstrip(".")
@@ -123,6 +142,8 @@ class Session:
             prompt = f"I am in pain. {cause}."
         else:
             prompt = f"I am in pain. {cause}. My pain is {rating} out of 10."
+        if self.memory:
+            self.memory.log_pain(cause, rating)
         if rating is not None and rating >= HIGH_PAIN_AT:
             self.say_fixed(HIGH_PAIN_LINE)
         # the model gets the matching remedy from remedies.py (if any); history keeps only the plain message
@@ -154,14 +175,12 @@ class Session:
             self.care_hold = 0
             self._route(text, trig)
             self._wake()
-            line = opening_line(trig.kind)
-            if trig.kind == "pain":
-                if has_cause(text, trig.phrase):               # "ouch my arm hurts": we know where already
-                    self.cause = text
-                    line = ASK_RATING
-                    self.intake = "rating"
-                else:
-                    self.intake = "cause"
+            line = self._start_pain_check_in(text, trig)
+            if self.memory:
+                self.memory.learn(text)                       # "hi, my name is Kartik"
+                name = self.memory.name()
+                if name and line.startswith("Hey!"):
+                    line = f"Hey {name}!" + line[4:]
             self.say_fixed(line)
             self._remember(text, line)
             return "woke"
@@ -174,7 +193,24 @@ class Session:
             return "sleep"
         if self.intake:
             return self._check_in(text)
-        self._route(text, self.detector.check(text))         # pain or health talk mid-chat: back to the local model
+        if self.memory:
+            said = self.memory.respond(text)
+            if said:                                          # fixed reply from the database; NOT added to history
+                self.say_fixed(said)
+                return "memory"
+        trig = self.detector.check(text)
+        if trig and trig.kind == "pain" and BARE_PAIN_RE.match(trig.phrase) and not has_cause(text, trig.phrase):   # a bare "ouch" while awake starts a NEW check-in
+            self._route(text, trig)
+            line = self._start_pain_check_in(text, trig)
+            self.say_fixed(line)
+            self._remember(text, line)
+            return "intake"
+        self._route(text, trig)                               # other health talk mid-chat: back to the local model
+        if self.mode == CARE and asks_for_remedy(text) and is_health_topic(text) and not find_remedy(text):
+            self.say_fixed(NO_REMEDY_LINE)                   # not on the list: never let the model improvise one
+            self._remember(text, NO_REMEDY_LINE)
+            self.last_heard = self.clock()
+            return "reply"
         model_text = with_remedy(text) if self.mode == CARE else text      # remedies are looked up locally, in care mode only
         sentences = self.reply(model_text, list(self.history), self.mode)
         self._remember(text, " ".join(sentences) if sentences else "")
@@ -202,25 +238,44 @@ def api_messages(text, history):
 # Wiring: real model + real voice
 # ---------------------------------------------------------------
 def build_speaker(args):
-    """Returns (say, wait, close, start_timer)."""
+    """Returns (say, wait, close, start_timer, ttfa_ms). args.silent = synthesize but play nothing (benchmark)."""
     if args.no_audio:
-        return (lambda t: None), (lambda: None), (lambda: None), (lambda: None)
+        return (lambda t: None), (lambda: None), (lambda: None), (lambda: None), (lambda: None)
     from speak import SpeechQueue, load_tts
     print("Loading the voice ...")
     synth, _, _ = load_tts(args.model_dir, args.voice, args.speed, args.pitch, args.softness)
-    q = SpeechQueue(synth)
-    return q.say, q.wait, q.close, q.start_timer
+    if not getattr(args, "no_cache", False):
+        from audio_cache import AudioCache, voice_key
+        cache = AudioCache(getattr(args, "audio_cache", "audio_cache"), voice_key(args.voice, args.speed, args.pitch, args.softness))
+        ready = cache.load()
+        if ready:
+            synth = cache.wrap(synth)
+            print(f"Pre-rendered audio: {ready} fixed lines play instantly.")
+        else:
+            print("No pre-rendered audio for this voice yet. Run  python prerender.py  to make safety replies instant.")
+    q = SpeechQueue(synth, play_fn=(lambda audio, sr: None)) if getattr(args, "silent", False) else SpeechQueue(synth)
+    return q.say, q.wait, q.close, q.start_timer, q.ttfa_ms
 
 
 def make_session(args):
     from baymax_speak import model_tokens, speak_stream
-    say, wait, close, start_timer = build_speaker(args)
+    say, wait, close, start_timer, ttfa_ms = build_speaker(args)
+    marks = {}                                   # shared with the Session: when things happened in this turn
     show = lambda s: print("Baymax:", s)
 
+    def record(t0, stats):
+        """Remember the earliest first-sentence / first-sound times of this turn (a turn can have several lines)."""
+        if stats.get("first_sentence_at"):
+            marks.setdefault("first_sentence", stats["first_sentence_at"])
+        if ttfa_ms():
+            marks.setdefault("first_audio", t0 + ttfa_ms() / 1000)
+
     def say_fixed(text):
+        t0 = time.perf_counter()
         start_timer()
-        speak_stream([text + " "], say, guard=False, show=show)
+        stats = speak_stream([text + " "], say, guard=False, show=show)
         wait()
+        record(t0, stats)
 
     chain = None
     if getattr(args, "online_friend", False):
@@ -246,22 +301,32 @@ def make_session(args):
 
     def reply(text, history, mode=CARE, skip_scale=False):
         start_timer()
-        marks, t0, source = {}, time.perf_counter(), {"name": "local"}
+        m, t0, source = {}, time.perf_counter(), {"name": "local"}
         friend = mode == FRIEND
         if friend and chain:
-            tokens = friend_tokens(text, history, marks, source)
+            tokens = friend_tokens(text, history, m, source)
         else:
-            tokens = model_tokens(text, marks, plain(history), system=FRIEND_SYSTEM if friend else None,
+            tokens = model_tokens(text, m, plain(history), system=FRIEND_SYSTEM if friend else None,
                                   temperature=0.7 if friend else 0.4)
-        stats = speak_stream(tokens, say, show=show, drop=is_scale_question if skip_scale else None)
+        stats = speak_stream(tokens, say, show=show, drop=is_scale_question if skip_scale else None,
+                             fast_first=getattr(args, "fast_first", False))
         for reason, sentence in stats["removed"]:
             print(f"   [guard removed ({reason}): {sentence}]")
         wait()
-        if marks.get("first_token"):
-            print(f"   [{mode} mode | answered by: {source['name']} | first token {(marks['first_token'] - t0) * 1000:.0f} ms]")
+        if m.get("first_token"):
+            marks.setdefault("first_token", m["first_token"])
+            print(f"   [{mode} mode | answered by: {source['name']} | first token {(m['first_token'] - t0) * 1000:.0f} ms]")
+        record(t0, stats)
         return stats["sentences"]
 
-    return Session(reply, say_fixed, idle_seconds=args.idle), close
+    memory = None
+    if not getattr(args, "no_memory", False):
+        from memory import Memory
+        memory = Memory(getattr(args, "memory", "baymax_memory.db"))
+        print(f"Memory is ON ({args.memory}). It stays on this computer. Say 'forget everything about me' to erase it.")
+    session = Session(reply, say_fixed, idle_seconds=args.idle, memory=memory)
+    session.marks = marks
+    return session, close
 
 
 # ---------------------------------------------------------------
@@ -282,6 +347,7 @@ def run_typed(session):
 
 
 def run_mic(session, args):
+    from latency import Trace
     from listen import (CHUNK, MIN_SPEECH_SEC, SAMPLE_RATE, UtteranceBuffer, ensure_cuda_libs_on_path,
                         load_stt, load_vad, transcribe)
     import sounddevice as sd
@@ -319,11 +385,16 @@ def run_mic(session, args):
             vad.reset_states()
             if len(audio) / SAMPLE_RATE < MIN_SPEECH_SEC:
                 continue
+            t_end = time.perf_counter()                     # the VAD says you finished
             text = transcribe(stt, audio)
+            t_stt = time.perf_counter()
             if not text:
                 continue
             print(f'You said: "{text}"')
+            session.marks.clear()
             result = session.handle(text)
+            if result not in ("ignored", "asleep"):
+                print(Trace(end_of_speech=t_end, stt_done=t_stt, **session.marks).line())
             if result == "asleep":
                 print("   [asleep: ignored]")
             if result != "ignored" and result != "asleep":
@@ -339,6 +410,12 @@ def main():
     ap.add_argument("--no-audio", action="store_true", help="do not load or play the voice")
     ap.add_argument("--online-friend", action="store_true",
                     help="use Groq, then OpenRouter, for casual chat (needs API keys; see llm_backends.py)")
+    ap.add_argument("--memory", default="baymax_memory.db", help="where the private memory file lives")
+    ap.add_argument("--no-memory", action="store_true", help="remember nothing")
+    ap.add_argument("--fast-first", action="store_true",
+                    help="start speaking after the first short clause of a model reply (faster, slightly less guarded)")
+    ap.add_argument("--audio-cache", default="audio_cache", help="folder made by prerender.py")
+    ap.add_argument("--no-cache", action="store_true", help="always synthesize live (ignore pre-rendered audio)")
     ap.add_argument("--idle", type=float, default=IDLE_SECONDS, help="seconds before it goes back to sleep")
     ap.add_argument("--stt-device", default="cuda", choices=["cuda", "cpu"])
     ap.add_argument("--mic", type=int, default=None)

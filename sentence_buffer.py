@@ -19,6 +19,10 @@ Splitting rules
   * optionally at commas (split_on_commas=True), only once the chunk is long enough
   * a bare list number like "1." is never a sentence on its own
 
+first_clause_only=True is the compromise for speed: only the very first chunk may end at a comma (and only after
+first_clause_words words). Each part is still checked by the guard on its own, but a removed second part can leave
+the first part spoken, so baymax_speak.py uses it only for model replies, never for the fixed (cached) lines.
+
 Why commas are OFF by default: your output guard judges whole sentences. If we speak the
 first half of a sentence before the second half exists, the guard cannot catch a number or
 a promise that appears later in that sentence. Turn commas on in Phase 5 only if
@@ -33,12 +37,15 @@ LIST_NUMBER_RE = re.compile(r"\s*\d+")          # "1" before the "." of "1. Rest
 
 
 class SentenceBuffer:
-    def __init__(self, split_on_commas=False, first_comma_words=4, later_comma_words=10):
+    def __init__(self, split_on_commas=False, first_comma_words=4, later_comma_words=10,
+                 first_clause_only=False, first_clause_words=3):
         self.buf = ""
         self.emitted = 0
         self.split_on_commas = split_on_commas
         self.first_comma_words = first_comma_words      # the first chunk may be short: speed matters most
         self.later_comma_words = later_comma_words      # later chunks wait longer: smoother speech
+        self.first_clause_only = first_clause_only      # split at ONE comma, only for the very first chunk (faster start)
+        self.first_clause_words = first_clause_words
 
     # ----- public -------------------------------------------------
     def feed(self, text):
@@ -80,6 +87,10 @@ class SentenceBuffer:
             if i + 1 >= len(buf) or not buf[i + 1].isspace():
                 continue
             if ch == ",":
+                if self.first_clause_only and self.emitted == 0 and not self.split_on_commas:
+                    if len(buf[:i].split()) >= self.first_clause_words:
+                        return i + 1            # "That sounds uncomfortable," can be spoken while the rest is still being written
+                    continue
                 if not self.split_on_commas:
                     continue
                 needed = self.first_comma_words if self.emitted == 0 else self.later_comma_words
