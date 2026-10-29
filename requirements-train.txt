@@ -1,0 +1,10 @@
+# Only needed to build the data and train the model (see "Build the model" in README.md). Install torch first.
+transformers
+peft
+trl
+bitsandbytes
+datasets
+accelerate
+pandas
+numpy
+ollama

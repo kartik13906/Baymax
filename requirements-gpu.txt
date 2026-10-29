@@ -1,0 +1,5 @@
+# GPU voice: install AFTER requirements.txt and after uninstalling the CPU build:
+#   pip uninstall -y onnxruntime onnxruntime-gpu
+#   pip install -r requirements-gpu.txt
+# 1.26.0 is a CUDA 12 build with a Python 3.14 wheel; 1.27 and newer expect CUDA 13.
+onnxruntime-gpu[cuda,cudnn]==1.26.0

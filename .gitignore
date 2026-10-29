@@ -1,11 +1,18 @@
+# environments and caches
 venv/
 __pycache__/
 *.log
-*.jsonl
 nohup.out
 llama.cpp/
+
+# large or generated files (rebuild with the README steps)
+*.jsonl
 outputs/
 models/
+audio_cache/
+voice_lab/
+
+# secrets and personal data
 .env
 baymax_memory.db
-audio_cache/
+baymax_memory.db-journal

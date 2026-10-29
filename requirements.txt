@@ -1,0 +1,13 @@
+# Runtime requirements for running Baymax (see README.md). PyTorch is installed separately (pip install torch).
+# Training libraries are in requirements-train.txt. The GPU voice build is in requirements-gpu.txt.
+numpy
+scipy
+ollama
+sounddevice
+faster-whisper
+silero-vad
+kokoro-onnx==0.6.1          # needs Python < 3.14, see the README note
+espeakng-loader
+phonemizer>=3.4.0
+nvidia-cublas-cu12          # lets Whisper run on the GPU
+nvidia-cudnn-cu12
