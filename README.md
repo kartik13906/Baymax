@@ -88,6 +88,7 @@ Read these numbers with care: the test speech is synthetic and clean (speech-to-
 | Memory | `memory.py`, `test_memory.py` |
 | Online friend chat | `llm_backends.py`, `test_backends.py`, `env.example` |
 | Voice | `listen.py`, `sentence_buffer.py`, `speak.py`, `voice_lab.py`, `baymax_speak.py`, `test_speech.py`, `test_fast_first.py` |
+| Web server and Docker | `server.py`, `web/index.html`, `Dockerfile`, `docker-compose.yml`, `docker-compose.gpu.yml`, `docker/entrypoint.sh`, `requirements-server.txt`, `test_server.py` |
 | Speed | `latency.py`, `benchmark.py`, `audio_cache.py`, `prerender.py`, `test_audio_cache.py` |
 
 Trained adapters, GGUF files, downloaded models, the memory database and the audio cache are **not** in the repository (large or personal). The steps below rebuild them.
@@ -207,6 +208,75 @@ The `.env` next to `baymax_live.py` is loaded even if you start the program from
 
 Set `GROQ_MODELS` and `OPENROUTER_MODELS` in `.env` (comma separated, tried in order). Free tiers change often and have their own data policies: read them before sending anything you care about. In local testing the local friend model answered faster than the online providers; the online path is for variety and for taking load off the laptop.
 
+## Run it with Docker (self-hosted)
+
+Anyone can run Baymax on their own computer without installing Python, CUDA or the models by hand. It starts a web page; your browser provides the microphone and speaker, so it works on Windows, macOS, Linux and phones.
+
+```bash
+git clone https://github.com/kartik13906/Baymax.git && cd Baymax
+cp env.example .env          # optional: API keys, emergency number, password
+docker compose up --build    # first run downloads about 3 GB, then it is fast
+```
+
+Open **http://localhost:8000**, press **Start listening**, and say "hello Baymax" (or type it).
+
+What starts, in order: `ollama` (runs the language model), `model-fetch` (copies `outputs/baymax-q4.gguf` if it exists, otherwise downloads it once), `model-init` (registers it with Ollama as `baymax`), and `baymax` (Whisper speech-to-text, the Kokoro voice, the safety layers and the web page). Stop with `docker compose down`; add `-v` to also delete the downloaded model and the memory file.
+
+**If the model download returns 401.** The default Hugging Face repository is private until you publish it. Either put `outputs/baymax-q4.gguf` on the machine (the compose file copies it automatically), make the repository public, or set `HF_TOKEN` in `.env`. You can also point `BAYMAX_GGUF_URL` at any public `.gguf` URL. `BAYMAX_GGUF_SHA256` is optional but recommended for a shared file.
+
+**Speed.** The default image runs everything on the CPU, so expect a few seconds per reply on an ordinary laptop. With an NVIDIA GPU and the NVIDIA Container Toolkit, run the language model on the GPU (the slowest part):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
+
+**Use it from a phone or another computer.** Browsers only allow the microphone on `https://` or `http://localhost`, so for other devices turn on the built-in self-signed certificate and set a password. In `.env`:
+
+```
+BAYMAX_BIND=0.0.0.0
+BAYMAX_TLS=1
+BAYMAX_TOKEN=pick-a-long-password
+```
+
+Then open `https://<your-computer's-address>:8000` and accept the certificate warning once. Never expose this to the public internet: it has no accounts, and everyone who can open the page shares one memory file. Set `BAYMAX_MEMORY=off` to remember nothing.
+
+**Settings** (all in `.env`; see `docker-compose.yml`): `BAYMAX_EMERGENCY_NUMBER` (default 112) and `BAYMAX_CRISIS_HELPLINE` (default empty = generic wording). **Set these for where you live**: Baymax tells people to call this number in an emergency. `BAYMAX_WHISPER_MODEL` (`base.en` or `small.en` are faster on weak CPUs), `BAYMAX_MAX_SESSIONS`, `BAYMAX_IDLE` (seconds before it sleeps), `BAYMAX_LOCAL_FRIEND=1`, `GROQ_API_KEY` / `OPENROUTER_API_KEY` for the online friend chat.
+
+**Share the built image (optional).** The model and Ollama stay separate, so publish only the `baymax` image:
+
+```bash
+docker build -t yourname/baymax:latest .
+docker push yourname/baymax:latest
+# on the other device:
+BAYMAX_IMAGE=yourname/baymax:latest docker compose pull
+BAYMAX_IMAGE=yourname/baymax:latest docker compose up --no-build
+```
+
+The other device still needs the model file (or `HF_TOKEN` / a public `BAYMAX_GGUF_URL`) and its own `.env`. Do not share `.env`: it contains API keys.
+
+**Privacy in Docker.** Audio and text are processed inside your containers. Health talk, the pain check-in, remedies, memory and safety replies never leave them. Only casual chat can go to Groq/OpenRouter, and only if you add keys. Audio is not recorded to disk. If memory is on, the small `baymax-data` volume stores your name, allergies and pain notes; `docker compose down -v` deletes it. The image uses the preset Kokoro voice only; no cloned voice is included or supported in Docker.
+
+### Publishing the model file (for the maintainer)
+
+The fine-tuned model is too big for GitHub, so `docker-compose.yml` downloads it from a URL (`BAYMAX_GGUF_URL`). Once:
+
+```bash
+pip install huggingface_hub
+huggingface-cli login
+huggingface-cli repo create baymax-gguf --type model
+huggingface-cli upload kartik13906/baymax-gguf path/to/your-q4_k_m.gguf baymax-q4_k_m.gguf
+sha256sum path/to/your-q4_k_m.gguf     # optional: put it in BAYMAX_GGUF_SHA256 so downloads are verified
+```
+
+Add a model card that says: fine-tuned from Qwen2.5-1.5B-Instruct (Apache-2.0), a learning project, **not a medical device**, and that it must be used with the safety layers in this repository (`safety_gate.py`, `output_guard.py`, `remedies.py`), because the raw model is not safe on its own. If your repository or file name differs from the default, set `BAYMAX_GGUF_URL` in `.env`.
+
+### Before you share this publicly
+
+- Have a clinician or a trusted first-aid source review `remedies.py` (44 entries). The code stops the model inventing remedies; it cannot check that the listed ones are right.
+- Check the emergency number and helpline for the countries you expect users in. The defaults are India's.
+- Keep the "not a medical device" notice (it is on the page and in the model card). Baymax gives general comfort and first-aid style tips, never diagnoses or medicines.
+- Free API tiers have their own data policies; read them before enabling the online friend chat for other people.
+
 ## Privacy
 
 - **Never leaves the computer:** health talk, pain check-ins, safety replies, remedies, your name, allergies and pain log. Each turn is tagged with its mode, and only friend-mode turns can be built into an online request (`api_messages` in `baymax_live.py`). Wake greetings, fixed lines and memory commands are spoken locally and are never added to an online request.
@@ -248,13 +318,14 @@ The emergency number and the crisis helpline are settings at the top of `safety_
 ## Tests
 
 ```bash
-python test_safety.py       # 68 checks: gate triggers and non-triggers, output guard behaviour
-python test_activation.py   # 38 checks: wake phrases, health routing, check-in, remedies, what may go online
+python test_safety.py       # 79 checks: gate triggers and non-triggers, output guard behaviour
+python test_activation.py   # 40 checks: wake phrases, health routing, check-in, remedies, what may go online
 python test_memory.py       # 9 checks: name, allergies, pain log, forgetting, privacy
 python test_speech.py       # sentence buffer, speech queue (incl. timeout), voice shaping, guard in the stream
 python test_audio_cache.py  # 8 checks: pre-rendered audio and common openers
 python test_fast_first.py   # 7 checks: the optional fast first clause
-python test_backends.py     # 16 checks of the online provider chain against a fake server
+python test_server.py       # 15 checks of the web server with fake models (pip install fastapi uvicorn httpx)
+python test_backends.py     # 12 checks of the online provider chain against a fake server
 python latency.py           # self-test of the timing code
 python remedies.py          # validates every remedy entry
 ```

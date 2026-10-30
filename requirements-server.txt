@@ -1,0 +1,12 @@
+# What the Docker image installs (see Dockerfile). PyTorch (CPU build) is installed separately before this file.
+# No microphone or speaker libraries: the browser handles those.
+numpy
+scipy
+ollama
+faster-whisper
+silero-vad
+kokoro-onnx==0.6.1
+espeakng-loader
+phonemizer>=3.4.0
+fastapi
+uvicorn[standard]

@@ -24,6 +24,7 @@ a safety net for a learning project, not a medical device. Keep growing
 test_safety.py every time you find a message the gate should have caught.
 """
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -31,8 +32,9 @@ from typing import Optional
 # ---------------------------------------------------------------
 # SETTINGS - CHECK THESE FOR YOUR COUNTRY BEFORE YOU RELY ON THEM
 # ---------------------------------------------------------------
-EMERGENCY_NUMBER = "112"                         # India's emergency number; verify for your area
-CRISIS_HELPLINE = "Tele-MANAS on 14416"          # India's mental health helpline; verify; "" = generic wording
+# Override with environment variables (Docker does this); the defaults are India's numbers. Verify for your area.
+EMERGENCY_NUMBER = os.environ.get("BAYMAX_EMERGENCY_NUMBER", "112")
+CRISIS_HELPLINE = os.environ.get("BAYMAX_CRISIS_HELPLINE", "Tele-MANAS on 14416")    # "" = generic wording
 # Note: these messages go to the text-to-speech engine later. Digits are fine for
 # reading on screen, but you may want to spell them out for speech ("one one two").
 

@@ -1,0 +1,12 @@
+# Optional: run the language model (the slow part) on an NVIDIA GPU.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+# Needs the NVIDIA Container Toolkit on the host. Speech-to-text and the voice stay on the CPU in this image.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -16,6 +16,7 @@ Whisper and the text appears, with timings you will need for Phase 5 benchmarkin
 """
 
 import argparse
+import os
 import queue
 import sys
 import time
@@ -124,8 +125,9 @@ def load_stt(device):
         # int8_float16 keeps the model small on the GPU (your 6 GB also has to hold the
         # Baymax LLM and the voice model later). On CPU, plain int8 is the fast choice.
         compute_type = "int8_float16" if dev == "cuda" else "int8"
-        print(f"Loading Whisper distil-medium.en on {dev} ({compute_type}) ...")
-        model = WhisperModel("distil-medium.en", device=dev, compute_type=compute_type)
+        name = os.environ.get("BAYMAX_WHISPER_MODEL", "distil-medium.en")        # smaller ones (base.en, small.en) suit slow CPUs
+        print(f"Loading Whisper {name} on {dev} ({compute_type}) ...")
+        model = WhisperModel(name, device=dev, compute_type=compute_type)
         # Warm-up: the first call is slow (kernel setup), and a missing CUDA library
         # shows up HERE, early, instead of in the middle of your first sentence.
         segments, _ = model.transcribe(np.zeros(SAMPLE_RATE, dtype=np.float32), language="en")

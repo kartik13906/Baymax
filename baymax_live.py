@@ -289,11 +289,13 @@ def build_speaker(args):
     return q.say, q.wait, q.close, q.start_timer, q.ttfa_ms
 
 
-def make_session(args):
+def make_session(args, speaker=None, show=None):
+    """speaker: (say, wait, close, start_timer, ttfa_ms), as build_speaker returns. The web server passes its own
+    (it sends audio to a browser); show(sentence) is what happens to each sentence Baymax says."""
     from baymax_speak import model_tokens, speak_stream
-    say, wait, close, start_timer, ttfa_ms = build_speaker(args)
+    say, wait, close, start_timer, ttfa_ms = speaker or build_speaker(args)
     marks = {}                                   # shared with the Session: when things happened in this turn
-    show = lambda s: print("Baymax:", s)
+    show = show or (lambda s: print("Baymax:", s))
 
     def record(t0, stats):
         """Remember the earliest first-sentence / first-sound times of this turn (a turn can have several lines)."""
