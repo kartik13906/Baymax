@@ -26,16 +26,45 @@ services:
     user: "0"
     volumes:
       - models:/models
+      # If you already have outputs/baymax-q4.gguf, this copies it instead of downloading.
+      # The folder is empty on a fresh clone; Docker creates it automatically.
+      - ./outputs:/local-model:ro
     environment:
       BAYMAX_GGUF_URL: ${BAYMAX_GGUF_URL:-https://huggingface.co/kartik13906/baymax-gguf/resolve/main/baymax-q4_k_m.gguf}
       BAYMAX_GGUF_SHA256: ${BAYMAX_GGUF_SHA256:-}
+      BAYMAX_GGUF_LOCAL: ${BAYMAX_GGUF_LOCAL:-/local-model/baymax-q4.gguf}
+      # Only needed when BAYMAX_GGUF_URL points at a private Hugging Face repo.
+      HF_TOKEN: ${HF_TOKEN:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
         if [ -s /models/baymax.gguf ]; then echo "Model file already downloaded."; exit 0; fi
-        echo "Downloading the Baymax model (about 1 GB, once) ..."
-        curl -fL --retry 5 --retry-delay 3 -o /models/baymax.gguf.part "$$BAYMAX_GGUF_URL"
+        if [ -s "$$BAYMAX_GGUF_LOCAL" ]; then
+          echo "Using the local model file at $$BAYMAX_GGUF_LOCAL ..."
+          cp "$$BAYMAX_GGUF_LOCAL" /models/baymax.gguf.part
+        else
+          if [ -z "$${BAYMAX_GGUF_URL:-}" ]; then
+            echo "No local model found and BAYMAX_GGUF_URL is empty." >&2
+            echo "Put baymax-q4.gguf in ./outputs/ or set BAYMAX_GGUF_URL in .env." >&2
+            exit 1
+          fi
+          echo "Downloading the Baymax model (about 1 GB, once) ..."
+          if [ -n "$${HF_TOKEN:-}" ]; then
+            curl -fL --retry 5 --retry-delay 3 -H "Authorization: Bearer $$HF_TOKEN" \
+              -o /models/baymax.gguf.part "$$BAYMAX_GGUF_URL" || {
+                echo "Download failed. If the model repo is private, set HF_TOKEN in .env." >&2
+                echo "Or put outputs/baymax-q4.gguf on this machine; it will be used instead." >&2
+                exit 1
+              }
+          else
+            curl -fL --retry 5 --retry-delay 3 -o /models/baymax.gguf.part "$$BAYMAX_GGUF_URL" || {
+              echo "Download failed. If the model repo is private, set HF_TOKEN in .env." >&2
+              echo "Or put outputs/baymax-q4.gguf on this machine; it will be used instead." >&2
+              exit 1
+            }
+          fi
+        fi
         if [ -n "$$BAYMAX_GGUF_SHA256" ]; then
           echo "$$BAYMAX_GGUF_SHA256  /models/baymax.gguf.part" | sha256sum -c -
         fi
@@ -68,8 +97,11 @@ services:
 
   # Step 3: Baymax itself.
   baymax:
-    build: .
-    image: baymax:local
+    build:
+      context: .
+      args:
+        BAYMAX_WHISPER_MODEL: ${BAYMAX_WHISPER_MODEL:-distil-medium.en}
+    image: ${BAYMAX_IMAGE:-baymax:local}
     restart: unless-stopped
     depends_on:
       ollama:
@@ -89,6 +121,7 @@ services:
       BAYMAX_TLS: ${BAYMAX_TLS:-0}
       BAYMAX_MEMORY: ${BAYMAX_MEMORY:-/data/baymax_memory.db}     # set to "off" to remember nothing
       BAYMAX_MAX_SESSIONS: ${BAYMAX_MAX_SESSIONS:-2}
+      BAYMAX_IDLE: ${BAYMAX_IDLE:-30}
       BAYMAX_WHISPER_MODEL: ${BAYMAX_WHISPER_MODEL:-distil-medium.en}
       # Defaults are India's numbers; change them for where you live. Empty helpline = generic wording.
       BAYMAX_EMERGENCY_NUMBER: ${BAYMAX_EMERGENCY_NUMBER:-112}

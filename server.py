@@ -145,7 +145,12 @@ class Conn:
             self.vad.reset()
             if len(utterance) / SAMPLE_RATE < MIN_SPEECH_SEC:
                 continue
-            text = self.engine.transcribe(utterance)
+            try:
+                text = self.engine.transcribe(utterance)
+            except Exception as e:                             # never let one bad audio turn kill the connection
+                self.log(f"[server] speech-to-text failed: {e!r}")
+                self.send_json({"type": "error", "text": ERROR_MODEL})
+                return
             if text:
                 self._turn(text)
                 self._forget_audio()                           # Baymax just spoke: drop what the mic heard meanwhile
@@ -367,6 +372,10 @@ def real_session_factory(engine, args):
 
 
 def main():
+    # Load .env BEFORE argparse reads defaults, so starting `python server.py` from a
+    # shell without exported variables still honours BAYMAX_PORT, BAYMAX_MEMORY, etc.
+    from llm_backends import load_env_file
+    load_env_file()
     from speak import DEFAULT_MODEL_DIR, load_voice_settings
     settings = load_voice_settings()
     env = os.environ.get
@@ -375,13 +384,14 @@ def main():
     ap.add_argument("--port", type=int, default=int(env("BAYMAX_PORT", "8000")))
     ap.add_argument("--max-sessions", type=int, default=int(env("BAYMAX_MAX_SESSIONS", "2")))
     ap.add_argument("--stt-device", default=env("BAYMAX_STT_DEVICE", "cpu"), choices=["cuda", "cpu"])
-    ap.add_argument("--threshold", type=float, default=0.5)
+    ap.add_argument("--threshold", type=float, default=float(env("BAYMAX_VAD_THRESHOLD", "0.5")))
+    ap.add_argument("--idle", type=float, default=float(env("BAYMAX_IDLE", "30")))
     ap.add_argument("--memory", default=env("BAYMAX_MEMORY", "baymax_memory.db"))
     ap.add_argument("--no-memory", action="store_true", default=env("BAYMAX_MEMORY", "") == "off")
     ap.add_argument("--local-friend", action="store_true", default=env("BAYMAX_LOCAL_FRIEND", "") == "1")
     ap.add_argument("--fast-first", action="store_true", default=env("BAYMAX_FAST_FIRST", "") == "1")
     ap.add_argument("--audio-cache", default=env("BAYMAX_AUDIO_CACHE", "audio_cache"))
-    ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--no-cache", action="store_true", default=env("BAYMAX_NO_CACHE", "") == "1")
     ap.add_argument("--voice", default=settings["voice"])
     ap.add_argument("--speed", type=float, default=settings["speed"])
     ap.add_argument("--pitch", type=float, default=settings["pitch"])
@@ -393,8 +403,6 @@ def main():
     args.online_friend, args.no_audio, args.silent = False, False, False
     args.voice_backend, args.clone_voice = "kokoro", "baymax"     # the server only uses the preset voice: no personal voices are ever shipped
 
-    from llm_backends import load_env_file
-    load_env_file()
     if not args.local_friend and (os.environ.get("GROQ_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
         args.online_friend = True
 
