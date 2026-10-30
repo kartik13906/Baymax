@@ -226,3 +226,13 @@ def is_scale_question(sentence):
     """The model was trained to ask for a pain rating. Once we already have one, drop that sentence."""
     return bool(re.search(r"\bscale\s+of\s+1\s+to\s+10\b|\b(rate|rating)\b.*\bpain\b|\bpain\b.*\b(rate|rating)\b",
                           normalize(sentence)))
+
+
+# Sympathy: the model opens almost every reply with "I am sorry to hear ...". Said once is kind; every turn is noise.
+SYMPATHY_RE = re.compile(r"^\W*(oh no\W+)?(i\s+am|i'm|im)\s+(so\s+|really\s+|very\s+)?sorry\b|"
+                         r"^\W*(that|it)\s+(sounds|must be|must feel)\b.{0,25}\b(painful|hard|tough|awful|terrible|uncomfortable|a lot)\b|"
+                         r"\bsorry to hear\b|\bsorry you are\b", re.I)
+
+
+def is_sympathy(sentence):
+    return bool(SYMPATHY_RE.search(sentence))

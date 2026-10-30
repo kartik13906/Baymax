@@ -72,6 +72,9 @@ def main():
     ap.add_argument("--fast-first", action="store_true", help="speak the first clause of model replies early")
     ap.add_argument("--no-cache", action="store_true", help="ignore pre-rendered audio (to see the difference)")
     ap.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
+    ap.add_argument("--voice-backend", default="xtts", choices=["kokoro", "voicekit", "xtts"],
+                    help="which voice answers (the app defaults to xtts)")
+    ap.add_argument("--clone-voice", default="baymax", help="voice profile for xtts / voicekit")
     a = ap.parse_args()
 
     if a.stt_device == "cuda":
@@ -85,7 +88,8 @@ def main():
     args = SimpleNamespace(typed=True, no_audio=False, silent=True, online_friend=a.online_friend, no_memory=True,
                            memory=":memory:", idle=10_000, stt_device=a.stt_device, model_dir=a.model_dir,
                            voice=settings["voice"], speed=settings["speed"], pitch=settings["pitch"],
-                           softness=settings["softness"], no_cache=a.no_cache, fast_first=a.fast_first, audio_cache="audio_cache")
+                           softness=settings["softness"], no_cache=a.no_cache, fast_first=a.fast_first, audio_cache="audio_cache",
+                           voice_backend=a.voice_backend, clone_voice=a.clone_voice)
     print("Loading speech-to-text ...")
     stt, stt_device = load_stt(a.stt_device)
     print("Loading the pipeline (voice + model) ...")

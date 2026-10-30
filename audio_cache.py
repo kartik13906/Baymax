@@ -26,6 +26,26 @@ def voice_key(voice, speed, pitch, softness):
     return f"v{CACHE_VERSION}|{voice}|{float(speed):.3f}|{float(pitch):.3f}|{float(softness):.3f}"
 
 
+def clone_voice_key(backend, voice, speed, pitch, softness):
+    """Cache key for a cloned voice. Includes a fingerprint of the reference audio, so
+    re-cloning a voice or reordering its clips does not keep playing stale audio."""
+    fingerprint = ""
+    try:
+        if backend == "xtts":
+            from xtts_voice import refs_fingerprint
+
+            fingerprint = refs_fingerprint(voice)
+        elif backend == "voicekit":
+            from voice_clone import sample_path
+
+            stat = sample_path(voice).stat()
+            fingerprint = f"{stat.st_size:x}-{stat.st_mtime_ns:x}"
+    except Exception:
+        fingerprint = ""
+    return (f"v{CACHE_VERSION}|{backend}|{voice}|{float(speed):.3f}|"
+            f"{float(pitch):.3f}|{float(softness):.3f}|{fingerprint}")
+
+
 class AudioCache:
     totals = {"hits": 0, "misses": 0}         # across all caches in this program (the benchmark prints them)
 
@@ -90,11 +110,12 @@ class AudioCache:
 def fixed_lines():
     """Every line Baymax speaks word for word (whole messages; they are split into sentences later)."""
     from activation import ASK_RATING, ASK_RATING_AGAIN, HIGH_PAIN_LINE, OPENINGS, SLEEP_LINE
-    from remedies import NO_REMEDY_LINE
+    from remedies import ENTRIES, NO_REMEDY_LINE, remedy_answer
     from safety_gate import DIAGNOSIS_MESSAGE, EMERGENCY_MESSAGES, EMERGENCY_NUMBER, _crisis_message
     lines = [m.format(EN=EMERGENCY_NUMBER) for m in EMERGENCY_MESSAGES.values()]
     lines += [_crisis_message(), DIAGNOSIS_MESSAGE, HIGH_PAIN_LINE, ASK_RATING, ASK_RATING_AGAIN, SLEEP_LINE, NO_REMEDY_LINE]
     lines += list(OPENINGS.values())
+    lines += [remedy_answer(e) for e in ENTRIES]            # spoken word for word when someone asks what to do
     return list(dict.fromkeys(lines))
 
 

@@ -141,7 +141,8 @@ def _():
         assert f.s.handle(q) == "reply", q
         assert "reliable remedy" in f.fixed[-1], q
     assert f.replied == [], "the model must not be called for these"
-    assert f.s.handle("any home remedy for a sore throat?") == "reply" and len(f.replied) == 1   # on the list: the model phrases it
+    assert f.s.handle("any home remedy for a sore throat?") == "reply" and f.replied == []     # on the list: the vetted remedy is spoken itself
+    assert "pinch of salt" in f.fixed[-1]
     f.s.handle("hi again")
     assert f.s.handle("any tips for studying better?") == "reply"                              # not health: normal chat path
 
@@ -400,14 +401,45 @@ def _():
     assert "Remedies you may share" not in " ".join(h["content"] for h in f.s.history), f.s.history
 
 
-@check("a health question in care mode also gets its remedy; a casual one never does")
+@check("asking what to do: the vetted remedy is spoken word for word; a casual message never gets one")
 def _():
     f = Fake()
     f.s.handle("hi")
     f.s.handle("tell me a joke")
-    f.s.handle("what can i do at home for a sore throat?")
     assert "Remedies you may share" not in f.replied[0][0]
-    assert "Remedies you may share" in f.replied[1][0] and "pinch of salt" in f.replied[1][0]
+    f.s.handle("what can i do at home for a sore throat?")
+    assert "pinch of salt" in f.fixed[-1] and len(f.replied) == 1
+
+
+@check("follow-ups remember what hurts: 'what can i do about it' gets the remedy, 'it still hurts' gets the remedy context")
+def _():
+    f = Fake()
+    f.s.handle("ouch")
+    f.s.handle("a heavy tin landed on my foot")
+    f.s.handle("6")
+    assert "Remedies you may share" in f.replied[0][0]
+    n = len(f.replied)
+    assert f.s.handle("what can i do about it") == "reply"
+    assert "keep the foot still" in f.fixed[-1] and "see a doctor today" in f.fixed[-1] and len(f.replied) == n
+    assert f.s.handle("it still hurts") == "reply"
+    assert "Remedies you may share" in f.replied[-1][0] and "keep the foot still" in f.replied[-1][0]
+    assert not any("scale of 1 to 10" in x for x in f.fixed[3:]), "'it still hurts' must not restart the check-in"
+    f.s.handle("good night baymax")
+    f.s.handle("ouch")                                            # new session: the old topic is forgotten
+    f.s.handle("my armpit hurts")
+    f.s.handle("five")
+    assert "Remedies you may share" not in f.replied[-1][0]
+
+
+@check("a follow-up about something with no remedy never reuses an old remedy")
+def _():
+    f = Fake()
+    f.s.handle("ouch")
+    f.s.handle("my armpit hurts")
+    f.s.handle("five")
+    assert f.s.handle("what can i do about it") == "reply"
+    assert "Remedies you may share" not in f.replied[-1][0]
+    assert f.s.handle("how do i ease it") == "reply" and "reliable remedy" in f.fixed[-1]
 
 
 @check("no remedy on the list: the message goes to the model unchanged (nothing invented)")

@@ -23,14 +23,15 @@ so test_activation.py can test it with fakes.
 
 import argparse
 import re
+import os
 import queue
 import sys
 import time
 
 from activation import (ASK_RATING, ASK_RATING_AGAIN, FRIEND_SYSTEM, HIGH_PAIN_AT, HIGH_PAIN_LINE, SLEEP_LINE,
-                        TriggerDetector, has_cause, is_filler, is_health_topic, is_scale_question, is_sleep_phrase,
+                        TriggerDetector, has_cause, is_filler, is_health_topic, is_scale_question, is_sleep_phrase, is_sympathy,
                         opening_line, parse_pain_rating)
-from remedies import NO_REMEDY_LINE, asks_for_remedy, find_remedy, with_remedy
+from remedies import NO_REMEDY_LINE, asks_for_remedy, find_remedy, remedy_answer, with_remedy
 from safety_gate import check_message
 
 SLEEPING, ACTIVE = "sleeping", "active"
@@ -65,6 +66,7 @@ class Session:
         self.care_hold = 0                   # turns left in which short follow-ups still count as health talk
         self.intake = None                   # pain check-in: None, "cause" (what/where?) or "rating" (how bad?)
         self.cause = ""                      # what the person said hurts / happened
+        self.topic = None                    # the remedy entry for what hurts, so follow-ups ("what can I do?") still have it
         self.rating_tries = 0
         self.history = []
         self.last_heard = 0.0
@@ -85,6 +87,7 @@ class Session:
         self.history = []
         self.care_hold = 0
         self.intake, self.cause, self.rating_tries = None, "", 0
+        self.topic = None
 
     def _route(self, text, trig=None):
         """Pick the mode for THIS message. Health words -> CARE (local model only), and CARE stays on
@@ -138,6 +141,7 @@ class Session:
         """We know what happened and how bad it is. Tell the model, so it does not ask again."""
         cause = self.cause.strip().rstrip(".")
         self.intake, self.rating_tries = None, 0
+        self.topic = find_remedy(cause)
         if rating is None:
             prompt = f"I am in pain. {cause}."
         else:
@@ -147,7 +151,7 @@ class Session:
         if rating is not None and rating >= HIGH_PAIN_AT:
             self.say_fixed(HIGH_PAIN_LINE)
         # the model gets the matching remedy from remedies.py (if any); history keeps only the plain message
-        sentences = self.reply(with_remedy(prompt, cause), list(self.history), CARE, True)
+        sentences = self.reply(with_remedy(prompt, cause, entry=self.topic), list(self.history), CARE, True)
         self._remember(prompt, " ".join(sentences) if sentences else "")
         self.last_heard = self.clock()
         return "reply"
@@ -199,19 +203,34 @@ class Session:
                 self.say_fixed(said)
                 return "memory"
         trig = self.detector.check(text)
-        if trig and trig.kind == "pain" and BARE_PAIN_RE.match(trig.phrase) and not has_cause(text, trig.phrase):   # a bare "ouch" while awake starts a NEW check-in
+        refers_back = bool(self.cause) and re.match(r"(it|that|this)\b", trig.phrase if trig else "", re.I)   # "it still hurts" = the same pain
+        if trig and trig.kind == "pain" and BARE_PAIN_RE.match(trig.phrase) and not has_cause(text, trig.phrase) and not refers_back:   # a bare "ouch" starts a NEW check-in
             self._route(text, trig)
             line = self._start_pain_check_in(text, trig)
             self.say_fixed(line)
             self._remember(text, line)
             return "intake"
         self._route(text, trig)                               # other health talk mid-chat: back to the local model
-        if self.mode == CARE and asks_for_remedy(text) and is_health_topic(text) and not find_remedy(text):
-            self.say_fixed(NO_REMEDY_LINE)                   # not on the list: never let the model improvise one
-            self._remember(text, NO_REMEDY_LINE)
-            self.last_heard = self.clock()
-            return "reply"
-        model_text = with_remedy(text) if self.mode == CARE else text      # remedies are looked up locally, in care mode only
+        entry = None
+        if self.mode == CARE:
+            entry = find_remedy(text)
+            if entry:
+                self.topic = entry
+            else:
+                entry = self.topic                           # a follow-up like "it still hurts" or "what can I do?"
+        if self.mode == CARE and asks_for_remedy(text):
+            if entry:                                        # they asked what to do: say the vetted remedy itself
+                said = remedy_answer(entry)
+                self.say_fixed(said)
+                self._remember(text, said)
+                self.last_heard = self.clock()
+                return "reply"
+            if is_health_topic(text) or self.cause:          # not on the list: never let the model improvise one
+                self.say_fixed(NO_REMEDY_LINE)
+                self._remember(text, NO_REMEDY_LINE)
+                self.last_heard = self.clock()
+                return "reply"
+        model_text = with_remedy(text, entry=entry) if self.mode == CARE else text      # remedies come from remedies.py, care mode only
         sentences = self.reply(model_text, list(self.history), self.mode)
         self._remember(text, " ".join(sentences) if sentences else "")
         self.last_heard = self.clock()                       # the clock starts after Baymax finishes talking
@@ -241,18 +260,31 @@ def build_speaker(args):
     """Returns (say, wait, close, start_timer, ttfa_ms). args.silent = synthesize but play nothing (benchmark)."""
     if args.no_audio:
         return (lambda t: None), (lambda: None), (lambda: None), (lambda: None), (lambda: None)
-    from speak import SpeechQueue, load_tts
+    from speak import SpeechQueue, load_tts, load_cloned_synth
     print("Loading the voice ...")
-    synth, _, _ = load_tts(args.model_dir, args.voice, args.speed, args.pitch, args.softness)
+    backend = getattr(args, "voice_backend", "kokoro")   # CLI defaults to xtts; old callers stay on kokoro
+    clone_voice = getattr(args, "clone_voice", "baymax")
+    pitch = getattr(args, "pitch", 1.0)
+    softness = getattr(args, "softness", 0.0)
+    if backend in ("voicekit", "xtts"):
+        synth = load_cloned_synth(backend, clone_voice, args.speed, pitch, softness)
+        label = "XTTS v2" if backend == "xtts" else "Voicekit/SV2TTS"
+        print(f"Speaking with the cloned voice '{clone_voice}' ({label}).")
+    else:
+        synth, _, _ = load_tts(args.model_dir, args.voice, args.speed, pitch, softness)
     if not getattr(args, "no_cache", False):
-        from audio_cache import AudioCache, voice_key
-        cache = AudioCache(getattr(args, "audio_cache", "audio_cache"), voice_key(args.voice, args.speed, args.pitch, args.softness))
+        from audio_cache import AudioCache, clone_voice_key, voice_key
+        if backend == "kokoro":
+            key = voice_key(args.voice, args.speed, pitch, softness)
+        else:
+            key = clone_voice_key(backend, clone_voice, args.speed, pitch, softness)
+        cache = AudioCache(getattr(args, "audio_cache", "audio_cache"), key)
         ready = cache.load()
         if ready:
             synth = cache.wrap(synth)
             print(f"Pre-rendered audio: {ready} fixed lines play instantly.")
         else:
-            print("No pre-rendered audio for this voice yet. Run  python prerender.py  to make safety replies instant.")
+            print("No pre-rendered audio for this voice yet. Run  python prerender.py  to make fixed replies instant.")
     q = SpeechQueue(synth, play_fn=(lambda audio, sr: None)) if getattr(args, "silent", False) else SpeechQueue(synth)
     return q.say, q.wait, q.close, q.start_timer, q.ttfa_ms
 
@@ -283,8 +315,11 @@ def make_session(args):
         load_env_file()
         chain = build_chain()
         print("Online friend chat is ON: casual messages go to an online provider.")
-        print("Health talk, safety replies and anything about pain stay on this computer.")
+        print("Health talk, safety replies, wake greetings, fixed lines and anything about pain stay on this computer.")
+        print("Each model reply prints who answered it: [friend mode | answered by: groq ...].")
         print("Providers:", chain.describe(), "\n")
+    elif getattr(args, "local_friend", False):
+        print("Online friend chat is OFF (--local-friend): casual chat uses the local model.")
 
     def friend_tokens(text, history, marks, source):
         """Casual chat: try Groq, then OpenRouter, then fall back to the local friend model."""
@@ -308,7 +343,10 @@ def make_session(args):
         else:
             tokens = model_tokens(text, m, plain(history), system=FRIEND_SYSTEM if friend else None,
                                   temperature=0.7 if friend else 0.4)
-        stats = speak_stream(tokens, say, show=show, drop=is_scale_question if skip_scale else None,
+        said_sorry = any(h["role"] == "assistant" and is_sympathy(h["content"]) for h in history)
+        def drop(sentence):                       # no second "I am sorry to hear that" and no repeated pain-scale question
+            return (skip_scale and is_scale_question(sentence)) or (said_sorry and not friend and is_sympathy(sentence))
+        stats = speak_stream(tokens, say, show=show, drop=drop,
                              fast_first=getattr(args, "fast_first", False))
         for reason, sentence in stats["removed"]:
             print(f"   [guard removed ({reason}): {sentence}]")
@@ -410,6 +448,8 @@ def main():
     ap.add_argument("--no-audio", action="store_true", help="do not load or play the voice")
     ap.add_argument("--online-friend", action="store_true",
                     help="use Groq, then OpenRouter, for casual chat (needs API keys; see llm_backends.py)")
+    ap.add_argument("--local-friend", action="store_true",
+                    help="casual chat stays on the local model even when API keys exist (the local model is trained for health, so it sounds medical)")
     ap.add_argument("--memory", default="baymax_memory.db", help="where the private memory file lives")
     ap.add_argument("--no-memory", action="store_true", help="remember nothing")
     ap.add_argument("--fast-first", action="store_true",
@@ -425,13 +465,28 @@ def main():
     ap.add_argument("--pitch", type=float, default=settings["pitch"])
     ap.add_argument("--softness", type=float, default=settings["softness"])
     ap.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
+    ap.add_argument("--voice-backend", default="xtts", choices=["kokoro", "voicekit", "xtts"],
+                    help="text-to-speech backend: xtts (best clone), voicekit (SV2TTS clone) or kokoro (local preset voices)")
+    ap.add_argument("--clone-voice", default="baymax",
+                    help="cloned-voice profile used when --voice-backend is xtts or voicekit")
     args = ap.parse_args()
+
+    if not args.online_friend and not args.local_friend:     # keys in .env = the friend chat goes online by default
+        from llm_backends import load_env_file
+        load_env_file()
+        if os.environ.get("GROQ_API_KEY") or os.environ.get("OPENROUTER_API_KEY"):
+            args.online_friend = True
+        else:
+            print("NOTE: no API keys found in .env, so casual chat runs on the local health model and will sound medical.")
+            print("      Add GROQ_API_KEY / OPENROUTER_API_KEY to .env (see env.example) for a friendly voice.\n")
 
     if not args.typed and args.stt_device == "cuda":
         from listen import ensure_cuda_libs_on_path
         ensure_cuda_libs_on_path()
 
     session, close = make_session(args)
+    from baymax_speak import warmup_model
+    warmup_model()                       # load the model now and keep it resident before the first turn
     try:
         run_typed(session) if args.typed else run_mic(session, args)
     except KeyboardInterrupt:

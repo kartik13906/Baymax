@@ -72,8 +72,14 @@ class TemporaryFailure(Exception):
     """Timeout, network problem or server error: try again later."""
 
 
-def load_env_file(path=".env"):
-    """Tiny .env reader: KEY=VALUE lines. Does not override variables that are already set."""
+DEFAULT_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+
+def load_env_file(path=None):
+    """Tiny .env reader: KEY=VALUE lines. Does not override variables that are already set.
+    By default it reads the .env next to this file, so starting Baymax from another
+    folder still finds the keys."""
+    path = path or DEFAULT_ENV_FILE
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:

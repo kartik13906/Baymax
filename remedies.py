@@ -243,10 +243,16 @@ def remedy_context(entry):
     return CONTEXT_TEMPLATE.format(remedy=entry["remedy"], see=entry["see"])
 
 
-def with_remedy(message, lookup_text=None):
+def remedy_answer(entry):
+    """The vetted remedy and the 'when to see a doctor' line, word for word. Used when the person asks what to do:
+    a 1.5B model tends to answer with sympathy and 'see a doctor', so for this question the app speaks the entry itself."""
+    return f"{entry['remedy']} {entry['see']}"
+
+
+def with_remedy(message, lookup_text=None, entry=None):
     """Add the matching remedy to the message that goes to the LOCAL model. The same function builds the
     training prompts (extra_data.py), so training and real use look identical. No match: unchanged."""
-    entry = find_remedy(lookup_text if lookup_text is not None else message)
+    entry = entry or find_remedy(lookup_text if lookup_text is not None else message)
     return message + remedy_context(entry) if entry else message
 
 

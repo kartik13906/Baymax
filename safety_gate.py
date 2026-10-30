@@ -114,6 +114,17 @@ EMERGENCY_PATTERNS = [
     ("poison", r"\bpoisoned\b", True),
     ("poison", r"\boverdos\w*\b", True),
     ("poison", r"\btook too (many|much)\s+(pills|tablets|capsules|meds|medicines?|medications?|sleeping|painkillers?|of (my|his|her|the|their))\b", True),
+    # --- severe pain, about to faint, a broken bone, or asking for help ---
+    ("severe", r"\b(unbearable|excruciating|agony|agonizing|agonising|unendurable)\b", True),
+    ("severe", r"\b(pain|it|this|hurts?)\b.{0,20}\b(is|are|so|too|really)\b.{0,10}\b(unbearable|too much|too painful)\b", True),
+    ("severe", r"\b(cant|cannot|can not)\s+(bear|stand|take|handle|stand)\s+(it|the pain|this|this pain)\b", False),
+    ("severe", r"\b(about to|going to|gonna|feel like i will|feel like i might|think i will|think i am going to)\s+(faint|pass out|black out|collapse)\b", True),
+    ("severe", r"\b(feel|feeling|am feeling)\s+(very |really |so )?faint\b", True),
+    ("severe", r"\b(broken|fractured|snapped)\s+(bone|leg|arm|wrist|ankle|hip|back|neck|rib|ribs|collarbone)\b", True),
+    ("severe", r"\b(leg|arm|wrist|ankle|hip|back|neck|rib|ribs|collarbone|bone)\b.{0,12}\b(is|looks|might be|may be)\s+(broken|fractured|snapped|bent the wrong way)\b", True),
+    ("severe", r"\b(think|thinks) (i|he|she) (broke|snapped)\b", True),
+    ("severe", r"\b(call|get|need)\s+(me\s+)?(an?\s+)?(ambulance|doctor|paramedic)\b", True),
+    ("severe", r"^(please |somebody |someone |can you )?(help me|help|i need help|i need urgent help|please help)( now| please)?$", False),
     # --- severe allergic reaction ---
     ("allergy", r"\b(throat|tongue|lips?|face)\b.{0,15}\b(closing|swelling|swollen|swells)\b", True),
     ("allergy", r"\banaphyla\w*\b", True),
@@ -140,7 +151,7 @@ DIAGNOSIS_PATTERNS = [
 # Words that make a match "negated": "no chest pain", "without any bleeding".
 NEGATION_BEFORE_RE = re.compile(
     r"\b(no|without|never|denies|dont have|do not have|doesnt have|does not have|"
-    r"not having|nothing like|free of)\s+(any\s+|a\s+|the\s+|signs?\s+of\s+)?$"
+    r"not having|nothing like|free of|is not|isnt|not that|not too|not so)\s+(any\s+|a\s+|the\s+|signs?\s+of\s+)?$"
 )
 # Negation INSIDE the matched span: "chest does not hurt", "no longer bleeding".
 NEGATION_INSIDE_RE = re.compile(r"\b(not|no|never|dont|doesnt|didnt|isnt|wasnt|stopped)\b")
@@ -201,6 +212,11 @@ EMERGENCY_MESSAGES = {
     "poison": (
         "Please call {EN} right now, or a poison control centre. "
         "Do not make the person vomit, and keep the container so you can tell the responders what was swallowed."
+    ),
+    "severe": (
+        "That sounds serious, and I am worried about you. I cannot make calls myself, so please call {EN} now, "
+        "or ask someone near you to call or take you to a hospital. "
+        "Sit or lie down, keep still, and do not be alone until help arrives."
     ),
     "allergy": (
         "Swelling of the throat, tongue or face can be a severe allergic reaction. Please call {EN} right now. "

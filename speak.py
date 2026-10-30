@@ -1,8 +1,13 @@
 """
-speak.py - Baymax Phase 3: text-to-speech with Kokoro-82M (ONNX version).
+speak.py - Baymax Phase 3: text-to-speech.
+
+Three backends:
+  * Kokoro-82M (ONNX)          load_tts()           fast, local preset voices
+  * XTTS v2 (zero-shot clone)  load_xtts_synth()    best clone of a reference voice
+  * Voicekit / SV2TTS          load_voicekit_synth() clone via the Voicekit package
 
 Two parts:
-  1. load_tts()     loads the Kokoro model and returns a function: text -> (audio, sample_rate)
+  1. load_*()       load a model and return a function: text -> (audio, sample_rate)
   2. SpeechQueue    two background threads. One turns text into audio, the other plays it.
                     While sentence 1 is playing, sentence 2 is already being synthesized, so
                     there is no gap between sentences. It also measures time-to-first-audio.
@@ -13,7 +18,8 @@ Try it:
     python speak.py --list-voices
     python speak.py --save hello.wav "Hello"      # write a file instead of playing (no speaker needed)
 
-The first run downloads the model (about 350 MB) into models/kokoro/.
+The first Kokoro run downloads the model (about 350 MB) into models/kokoro/.
+Cloned voices live in ~/.voicekit/voices/ and are used by baymax_live.py / baymax_speak.py.
 """
 
 import argparse
@@ -36,6 +42,13 @@ BASE_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-
 MODEL_FILE, VOICES_FILE = "kokoro-v1.0.onnx", "voices-v1.0.bin"
 
 DIGIT_WORDS = "zero one two three four five six seven eight nine".split()
+
+# Speed is not directly comparable across backends: at the same `speed` value XTTS
+# speaks much slower than Kokoro (measured at 0.92: 1.9 versus 2.4 words/s on the
+# same line). Scale it up so voice.json keeps the pace the user picked, whichever
+# backend is speaking. At this factor XTTS tracks Kokoro closely: 3.1 vs 3.4 s for
+# "Hello, I am Baymax...", 2.0 vs 1.9 s and 2.7 vs 3.0 s for the other demo lines.
+XTTS_SPEED_SCALE = 1.4
 
 
 def speakable(text):
@@ -167,6 +180,62 @@ def load_tts(model_dir=DEFAULT_MODEL_DIR, voice=DEFAULT_VOICE, speed=DEFAULT_SPE
     """Returns (synth, sample_rate, voice_names)."""
     kokoro = load_kokoro(model_dir)
     return make_synth(kokoro, voice, speed, pitch, softness), 24000, kokoro.get_voices()
+
+
+def load_xtts_synth(voice_name: str = "baymax", speed: float = 1.0,
+                    pitch: float = 1.0, softness: float = 0.0):
+    """Synthesize with XTTS v2, a modern zero-shot cloner (much closer to the reference
+    voice than SV2TTS, and ~3x faster than real time on the GPU here).
+
+    Reference clips come from ~/.voicekit/voices/<name>/xtts_refs/*.wav, falling back to
+    the Voicekit profile sample. The model and its reference latents stay resident."""
+    from xtts_voice import get_xtts
+
+    # XTTS's own speed scale is slower than Kokoro's; see XTTS_SPEED_SCALE above.
+    model_speed = max(0.5, min(2.0, float(speed) * XTTS_SPEED_SCALE))
+    voice = get_xtts(voice_name, speed=model_speed)
+    voice.load()                        # load the model at startup, not mid-reply
+
+    if abs(pitch - 1.0) > 1e-3 or softness > 0.0:
+        def synth(text):
+            audio, sample_rate = voice.synth(speakable(text))
+            return shape_voice(audio, pitch, softness), sample_rate
+    else:
+        def synth(text):
+            return voice.synth(speakable(text))
+
+    return synth
+
+
+def load_cloned_synth(backend: str = "xtts", voice_name: str = "baymax", speed: float = 1.0,
+                      pitch: float = 1.0, softness: float = 0.0):
+    """Pick a cloned-voice backend: 'xtts' (high fidelity) or 'voicekit' (SV2TTS)."""
+    if backend == "voicekit":
+        return load_voicekit_synth(voice_name, pitch, softness)
+    return load_xtts_synth(voice_name, speed, pitch, softness)
+
+
+def load_voicekit_synth(voice_name: str = "baymax", pitch: float = 1.0, softness: float = 0.0):
+    """Synthesize with a Voicekit-cloned voice (SV2TTS zero-shot cloner) instead of Kokoro.
+    The voice must be registered once:  voicekit add <name> <sample.wav> --i-have-permission
+
+    Uses voice_clone.VoiceCloner, which keeps the three SV2TTS models in memory and caches the
+    speaker embedding, instead of the `voice-cloning` package's reload-everything-per-sentence
+    path (that one took ~27 s before the first word)."""
+    from voice_clone import get_cloner
+
+    cloner = get_cloner(voice_name)
+    cloner.load()                       # pay the one-time model load at startup, not mid-reply
+
+    if abs(pitch - 1.0) > 1e-3 or softness > 0.0:
+        def synth(text):
+            audio, sample_rate = cloner.synth(speakable(text))
+            return shape_voice(audio, pitch, softness), sample_rate
+    else:
+        def synth(text):
+            return cloner.synth(speakable(text))
+
+    return synth
 
 
 def play_audio(audio, sample_rate):

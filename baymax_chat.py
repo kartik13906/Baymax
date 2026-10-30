@@ -10,10 +10,10 @@ Needs: the Ollama model named "baymax" (ollama create baymax -f Modelfile)
 
 import ollama
 
+from model_config import KEEP_ALIVE, resolve_model
 from output_guard import clean_reply
 from safety_gate import check_message
 
-MODEL = "baymax"
 SHOW_DEBUG = True    # print what the gate and guard did, so you can learn from it
 
 
@@ -25,9 +25,10 @@ def answer(user_text: str) -> str:
         return gate.message
 
     resp = ollama.chat(
-        model=MODEL,
+        model=resolve_model(),
         messages=[{"role": "user", "content": user_text}],   # the Modelfile adds the system prompt
         options={"temperature": 0.4, "num_predict": 150},
+        keep_alive=KEEP_ALIVE,
     )
     raw = resp["message"]["content"].strip()
     cleaned, report = clean_reply(raw)

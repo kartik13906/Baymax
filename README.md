@@ -19,7 +19,7 @@ This is an independent fan project inspired by the fictional character Baymax. I
 - **Private memory** (`memory.py`). SQLite file on your computer with your name, allergies and recent pain check-ins. Ask "what do you remember about me", "how has my pain been" or say "forget everything about me".
 - **Friend chat, optionally online** (`llm_backends.py`). With `--online-friend`, casual chat tries Groq, then OpenRouter, then falls back to the local model, with several models per provider and automatic cool-downs when a model is rate limited.
 - **Voice in.** Microphone, Silero VAD, then Faster-Whisper (`distil-medium.en`) on the GPU.
-- **Voice out.** Kokoro-82M (ONNX) on the GPU, with adjustable pitch, softness and voice blending, fed by a sentence buffer so speech starts while the model is still writing. Lines Baymax says word for word (safety replies, wake-up lines, the pain questions, common reply openers) are pre-rendered and play instantly.
+- **Voice out.** XTTS v2 (a modern zero-shot cloner) speaks in a cloned voice from a few seconds of reference audio; Kokoro-82M (ONNX) remains available for fast preset voices with adjustable pitch, softness and blending. A sentence buffer starts speech while the model is still writing. Lines Baymax says word for word (safety replies, wake-up lines, the pain questions, common reply openers) are pre-rendered and play instantly, for the cloned voice as well as Kokoro.
 
 ## How a message flows
 
@@ -41,21 +41,26 @@ This is an independent fan project inspired by the fictional character Baymax. I
                      |
         sentence_buffer.py -> output_guard.py (checks each sentence)
                      |
-        audio cache (pre-rendered) or Kokoro voice (GPU) -> speaker
+        audio cache (pre-rendered) or XTTS / Kokoro voice (GPU) -> speaker
 ```
 
 ## Speed
 
-Measured with `python benchmark.py --fast-first` on the author's laptop (6 GB NVIDIA GPU; Whisper `distil-medium.en`, Kokoro and the 1.5B model all on the GPU, 6 test sentences, 3 timed runs each). Time from "the voice activity detector decided you stopped talking" to "the first sound":
+Measured with `python benchmark.py --runs 2 --voice-backend xtts` on this laptop (6 GB NVIDIA GPU; Whisper `distil-medium.en` and XTTS v2 on the GPU; the Q4_K_M model on the CPU because this Ollama build ships without a CUDA backend; 6 test sentences, 2 timed runs each). Time from "the voice activity detector decided you stopped talking" to "the first sound":
 
-| Kind of turn | Median to first sound |
-|---|---|
-| Safety (gate) reply | 218 ms |
-| Care reply with a remedy | 565 ms |
-| Friend chat | 702 ms |
-| **All test turns** | **570 ms** (goal 800 ms) |
+| Kind of turn | Default (median) | `--fast-first` (median) |
+|---|---|---|
+| Safety (gate) reply | 216 ms | 216 ms |
+| Care reply | 218 ms | 221 ms |
+| Friend chat | 1299 ms | 625 ms |
+| **All test turns** | **688 ms** (goal 800 ms) | **299 ms** |
+| p95 (slow tail) | 3597 ms | 1729 ms |
 
-Read these numbers with care: the test speech is synthetic and clean (speech-to-text is a best case), they do not include the 600 ms of silence Baymax waits to be sure you finished, or speaker buffering, and about 41% of the spoken chunks came from the pre-rendered audio cache. With Whisper and the voice on the CPU and no audio cache, the same benchmark gave a 3.9 s median. `python baymax_live.py` prints a latency line after each real spoken turn.
+About 67% of the spoken chunks came from the pre-rendered audio cache in the default run. The slow tail is one long care sentence (a 27-word cold-vs-flu answer): the model takes ~0.9 s to finish that sentence and XTTS needs ~2.8 s to synthesize it. `--fast-first` speaks the first clause as soon as the model writes its first comma, which cuts that turn to ~1.7 s. The trade-off is unchanged: with `--fast-first` the output guard sees only the first clause, so a dangerous detail later in the same sentence can be removed after the clause has already been spoken. Keep it off if you want the strictest safety behavior.
+
+The pure text path (`python baymax_speak.py --no-audio`) gets its first model token in **~0.1–0.2 s** when warm and its first sentence in **~0.7 s**. Before the Q4 model and the startup warm-up, the same first token took **~2.5 s** and the first sound **~3.4 s**.
+
+Read these numbers with care: the test speech is synthetic and clean (speech-to-text is a best case), they do not include the 600 ms of silence Baymax waits to be sure you finished, or speaker buffering. `python baymax_live.py` prints a latency line after each real spoken turn. The earlier Kokoro benchmark (570 ms median) is not directly comparable: it did not run the cloned voice, and it had the model on the GPU.
 
 ## Status
 
@@ -63,7 +68,7 @@ Read these numbers with care: the test speech is synthetic and clean (speech-to-
 |---|---|---|
 | 1 | Environment setup | Done |
 | 2 | Data cleaning, persona data, QLoRA training, export to Ollama | Done (v7 model) |
-| 3 | Listening (VAD + Whisper) and speaking (sentence buffer + Kokoro) | Done |
+| 3 | Listening (VAD + Whisper) and speaking (sentence buffer + XTTS / Kokoro) | Done |
 | 4 | Safety gate and output guard | Done |
 | 5 | Wake phrases, pain check-in, remedies, friend chat, SQLite memory | Done |
 | 6 | One live program, latency benchmarks, pre-rendered audio, GPU voice | Done |
@@ -146,16 +151,26 @@ Each step prints what it did. Run them in order from the project folder with the
     python llama.cpp/convert_hf_to_gguf.py outputs/baymax-merged --outfile outputs/baymax-q8.gguf --outtype q8_0
     ollama create baymax -f Modelfile
     ```
+11. **Make a GPU-friendly build (recommended on a 6 GB card).** Ollama may quietly run the Q8 model on the CPU while Whisper and the voice hold the GPU, which made the first token take seconds. Convert the merged model to bf16, quantize to Q4_K_M, and register it as `baymax:q4`:
+    ```bash
+    python llama.cpp/convert_hf_to_gguf.py outputs/baymax-merged --outfile outputs/baymax-bf16.gguf --outtype bf16
+    llama.cpp/build/bin/llama-quantize outputs/baymax-bf16.gguf outputs/baymax-q4.gguf Q4_K_M
+    # Modelfile: FROM /absolute/path/outputs/baymax-q4.gguf
+    ollama create baymax:q4 -f Modelfile
+    ```
+    `model_config.py` uses `baymax:q4` when it is installed and falls back to `baymax`, so the app keeps working on a machine that only has the original model. Set `BAYMAX_MODEL` to force a different tag, or `BAYMAX_KEEP_ALIVE` to change how long the model stays loaded (default `30m`). Both CLIs warm the model at startup, so the first real reply does not pay the load cost.
 
 ## Run it
 
 | Command | What it does |
 |---|---|
 | `python baymax_live.py` | **The main program.** Microphone in, voice out. Sleeps until it hears a wake phrase. `--typed` tests it without a microphone, `--no-audio` skips the voice, `--idle N` sets the sleep timeout. |
+| `python baymax_live.py --voice-backend xtts` | Speak in the cloned voice (the default). `--clone-voice NAME` picks another registered voice profile. |
+| `python baymax_live.py --voice-backend voicekit` | Use the Voicekit / SV2TTS cloner instead of XTTS. `--voice-backend kokoro` goes back to the preset voices. |
 | `python baymax_live.py --fast-first` | Start speaking after the first short clause of a model reply. Faster, with one trade-off: if the output guard removes the second half of that sentence, the first clause has already been spoken. |
 | `python baymax_live.py --online-friend` | Casual chat goes to Groq, then OpenRouter (needs keys in `.env`; see below). |
 | `python baymax_live.py --no-memory` | Remember nothing. `--memory PATH` changes where the memory file lives. |
-| `python prerender.py` | Pre-render the fixed lines and the most common reply openers (mined from `train.jsonl`) into `audio_cache/`. Run once, and again after changing the voice or any fixed line. `--list` shows what it would render. |
+| `python prerender.py` | Pre-render the fixed lines and the most common reply openers (mined from `train.jsonl`) into `audio_cache/`, for the cloned voice by default. Run once, and again after changing the voice or any fixed line. `--list` shows what it would render; `--voice-backend kokoro` renders the preset voice instead. |
 | `python benchmark.py` | Time every stage with no microphone or speaker. `--fast-first`, `--no-cache`, `--online-friend`, `--stt-device cpu`. |
 | `python baymax_chat.py` | Typed chat: safety gate, then the model, then the output guard. |
 | `python baymax_speak.py` | Typed input, spoken answers, with timings. |
@@ -164,7 +179,7 @@ Each step prints what it did. Run them in order from the project folder with the
 | `python voice_lab.py` | Renders candidate voices to `voice_lab/` so you can compare them. `--choose NAME` saves your pick to `voice.json`. |
 | `python llm_backends.py --check` | Test your Groq and OpenRouter keys. `--models` lists the models your keys can use. |
 
-The first run of the voice downloads the Kokoro model (about 350 MB) into `models/kokoro/`.
+The first run downloads the XTTS v2 model (about 1.8 GB) into the TTS cache. If you switch to `--voice-backend kokoro`, its model (about 350 MB) is downloaded into `models/kokoro/`.
 
 ### Things you can say
 
@@ -179,22 +194,45 @@ The first run of the voice downloads the Kokoro model (about 350 MB) into `model
 cp env.example .env        # then put your keys in .env (it is ignored by git)
 python llm_backends.py --check
 python llm_backends.py --models
-python baymax_live.py --online-friend
+python baymax_live.py      # keys found -> casual chat goes online automatically
 ```
+
+If both keys are present, `baymax_live.py` turns online friend chat on by default. `--online-friend` still works and makes that explicit; `--local-friend` forces casual chat back to the local model. Wake greetings, safety replies and other fixed lines are spoken locally without calling any model, so the first "hello" is not an API call. Each casual model reply prints who answered it, for example:
+
+```text
+   [friend mode | answered by: groq | first token 375 ms]
+```
+
+The `.env` next to `baymax_live.py` is loaded even if you start the program from another folder. Restart the program after editing `.env`; a running process keeps the keys it loaded at startup.
 
 Set `GROQ_MODELS` and `OPENROUTER_MODELS` in `.env` (comma separated, tried in order). Free tiers change often and have their own data policies: read them before sending anything you care about. In local testing the local friend model answered faster than the online providers; the online path is for variety and for taking load off the laptop.
 
 ## Privacy
 
-- **Never leaves the computer:** health talk, pain check-ins, safety replies, remedies, your name, allergies and pain log. Each turn is tagged with its mode, and only friend-mode turns can be built into an online request (`api_messages` in `baymax_live.py`). Memory commands are never added to the chat history.
-- **Online (only with `--online-friend`):** casual friend-mode messages go to Groq or OpenRouter.
+- **Never leaves the computer:** health talk, pain check-ins, safety replies, remedies, your name, allergies and pain log. Each turn is tagged with its mode, and only friend-mode turns can be built into an online request (`api_messages` in `baymax_live.py`). Wake greetings, fixed lines and memory commands are spoken locally and are never added to an online request.
+- **Online (only for friend-mode chat):** casual friend-mode messages go to Groq or OpenRouter when keys are present, unless you start with `--local-friend`.
 - **Files to keep out of git:** `.env` (API keys), `baymax_memory.db` (your personal health notes), `audio_cache/`, `outputs/`, `models/`. The included `.gitignore` covers them.
 
 ## The voice
 
-Kokoro offers many built-in voices. `voice_lab.py` renders 8 voices (including two blends) in 3 characters each: `calm`, `deeper` and `big_soft`. Lower pitch makes a voice feel bigger, softness smooths harsh high frequencies, and blends mix two voices into a new one.
+**Cloned voice (default).** `baymax_live.py` and `baymax_speak.py` speak with **XTTS v2**, loaded once at startup. The reference clips live in `~/.voicekit/voices/<name>/xtts_refs/*.wav`; the cloner uses the first 6 seconds for prosody and averages the speaker embedding over all of them. Ten to thirty seconds of clean, single-speaker audio works best. `BAYMAX_XTTS_REFS=/path/a.wav:/path/b.wav` overrides the clips for one run.
 
-Cloning the recorded voice of a real person, or of a copyrighted character, is out of scope for this project. If you add voice cloning, use your own voice or one you have explicit permission to use.
+Order matters: XTTS takes pacing from the **first** clip, so name the most naturally paced one `01_*.wav`. `--speed` (from `voice.json`) is calibrated to feel the same as Kokoro; XTTS's own speed scale is slower, so `speak.py` scales it by `XTTS_SPEED_SCALE`.
+
+Register another voice with Voicekit (the profile folder is shared by both backends):
+
+```bash
+voicekit add myname /path/to/clean_sample.wav --i-have-permission
+python baymax_live.py --clone-voice myname
+```
+
+Add the XTTS clips **after** registering the voice: `voicekit add --overwrite` recreates the profile folder and removes `xtts_refs/`. Without them XTTS falls back to `sample.wav`, which still works but clones from a single clip.
+
+**Voicekit / SV2TTS.** `--voice-backend voicekit` uses the older Voicekit cloner (the `voice-cloning` package). It is available for comparison, and `voice_clone.py` keeps its three models resident so a sentence no longer reloads them; XTTS is faster and much closer to the reference voice.
+
+**Kokoro presets.** `--voice-backend kokoro` uses Kokoro's built-in voices. `voice_lab.py` renders 8 voices (including two blends) in 3 characters each: `calm`, `deeper` and `big_soft`. Lower pitch makes a voice feel bigger, softness smooths harsh high frequencies, and blends mix two voices into a new one.
+
+Cloning the recorded voice of a real person, or of a copyrighted character, needs permission from the voice's owner. Use it for personal experiments only, and check the law where you live.
 
 ## Safety design
 

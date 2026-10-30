@@ -2,10 +2,11 @@
 prerender.py - make the audio cache (see audio_cache.py).  Run it once, and again after you change the voice
 or any fixed line (safety messages, wake-up lines, the pain questions).
 
-    python prerender.py              # render what is missing for the current voice
+    python prerender.py              # render what is missing for the current voice (cloned by default)
     python prerender.py --list       # just show the sentences (no voice loaded)
     python prerender.py --clean      # delete the whole cache
-    python prerender.py --voice af_heart --speed 1.0     # render for another voice setting
+    python prerender.py --voice-backend kokoro --voice af_heart --speed 1.0
+    python prerender.py --clone-voice baymax --top 40
 
 It also renders the most common OPENERS of the model's replies, found in train.jsonl (the first chunk of each reply
 is what the person waits for). Use --top 0 to skip them, or --train PATH if the file lives elsewhere.
@@ -16,7 +17,8 @@ import time
 
 import os
 
-from audio_cache import AudioCache, fixed_lines, opener_sentences, spoken_sentences, training_replies, voice_key
+from audio_cache import (AudioCache, clone_voice_key, fixed_lines, opener_sentences, spoken_sentences,
+                         training_replies, voice_key)
 
 
 def main():
@@ -29,6 +31,9 @@ def main():
     ap.add_argument("--pitch", type=float, default=s["pitch"])
     ap.add_argument("--softness", type=float, default=s["softness"])
     ap.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
+    ap.add_argument("--voice-backend", default="xtts", choices=["kokoro", "voicekit", "xtts"],
+                    help="which voice to pre-render (the app defaults to xtts)")
+    ap.add_argument("--clone-voice", default="baymax", help="voice profile for xtts / voicekit")
     ap.add_argument("--train", default="train.jsonl", help="training file to mine for common reply openers")
     ap.add_argument("--top", type=int, default=40, help="how many common openers to render (0 = none)")
     ap.add_argument("--list", action="store_true")
@@ -48,7 +53,11 @@ def main():
             print("  ", t)
         print(f"\n{len(sentences)} sentences ({len(set(t for t, _ in openers))} common openers from {a.train}, for both --fast-first and normal mode)")
         return
-    cache = AudioCache(a.folder, voice_key(a.voice, a.speed, a.pitch, a.softness))
+    if a.voice_backend == "kokoro":
+        key = voice_key(a.voice, a.speed, a.pitch, a.softness)
+    else:
+        key = clone_voice_key(a.voice_backend, a.clone_voice, a.speed, a.pitch, a.softness)
+    cache = AudioCache(a.folder, key)
     if a.clean:
         print(f"Removed {cache.clean()} cached files.")
         return
@@ -58,9 +67,14 @@ def main():
     print(f"{len(sentences)} sentences: {len(sentences) - len(todo)} already cached ({have} files for this voice), {len(todo)} to render.")
     if not todo:
         return
-    from speak import load_tts
-    print(f"Loading the voice ({a.voice}) ...")
-    synth, sr, _ = load_tts(a.model_dir, a.voice, a.speed, a.pitch, a.softness)
+    if a.voice_backend == "kokoro":
+        from speak import load_tts
+        print(f"Loading the voice ({a.voice}) ...")
+        synth, sr, _ = load_tts(a.model_dir, a.voice, a.speed, a.pitch, a.softness)
+    else:
+        from speak import load_cloned_synth
+        print(f"Loading the cloned voice ({a.clone_voice}, {a.voice_backend}) ...")
+        synth = load_cloned_synth(a.voice_backend, a.clone_voice, a.speed, a.pitch, a.softness)
     seconds = 0.0
     t0 = time.perf_counter()
     for i, text in enumerate(todo, 1):

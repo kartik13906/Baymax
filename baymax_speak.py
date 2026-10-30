@@ -19,12 +19,12 @@ It prints three timings after every answer, the numbers you need for Phase 5:
 import argparse
 import time
 
+from model_config import KEEP_ALIVE, resolve_model
 from output_guard import DETAIL_NOTE, MAX_SENTENCES, SAFE_FALLBACK, check_sentence, strip_formatting
 from safety_gate import check_message
 from sentence_buffer import SentenceBuffer
 from speak import DEFAULT_MODEL_DIR, SpeechQueue, load_voice_settings, speakable
 
-MODEL = "baymax"
 SPLIT_ON_COMMAS = False        # see the note in sentence_buffer.py before changing this
 DETAIL_REASONS = {"number", "number word", "frequency", "medicine or test"}
 
@@ -93,16 +93,37 @@ def model_tokens(user_text, marks, history=None, system=None, temperature=0.4):
     system: replaces the Modelfile's system prompt for this call (used for the casual "friend" mode)."""
     import ollama
     stream = ollama.chat(
-        model=MODEL,
+        model=resolve_model(),
         messages=([{"role": "system", "content": system}] if system else [])
                  + list(history or []) + [{"role": "user", "content": user_text}],   # no system: the Modelfile's is used
         options={"temperature": temperature, "num_predict": 150},
+        keep_alive=KEEP_ALIVE,              # stay on the GPU between turns
         stream=True,
     )
     for chunk in stream:
         if "first_token" not in marks:
             marks["first_token"] = time.perf_counter()
         yield chunk["message"]["content"]
+
+
+def warmup_model(show=print):
+    """Load the model and keep it resident before the first real question.
+    Costs a second at startup; saves the same second from the first reply, and stops
+    Ollama from loading it again in the middle of the first turn."""
+    import ollama
+    t0 = time.perf_counter()
+    try:
+        ollama.chat(
+            model=resolve_model(),
+            messages=[{"role": "user", "content": "hi"}],
+            options={"temperature": 0.0, "num_predict": 1},
+            keep_alive=KEEP_ALIVE,
+        )
+    except Exception as e:
+        show(f"   [model warm-up skipped: {e}]")
+        return False
+    show(f"Model ready on {resolve_model()} in {time.perf_counter() - t0:.1f}s.")
+    return True
 
 
 def main():
@@ -114,18 +135,40 @@ def main():
     ap.add_argument("--softness", type=float, default=settings["softness"])
     ap.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
     ap.add_argument("--no-audio", action="store_true", help="print only; skip loading the voice")
+    ap.add_argument("--voice-backend", default="xtts", choices=["kokoro", "voicekit", "xtts"])
+    ap.add_argument("--clone-voice", default="baymax",
+                    help="cloned-voice profile used when --voice-backend is xtts or voicekit")
+    ap.add_argument("--audio-cache", default="audio_cache", help="folder made by prerender.py")
+    ap.add_argument("--no-cache", action="store_true", help="always synthesize live (ignore pre-rendered audio)")
     args = ap.parse_args()
 
     if args.no_audio:
         speaker = None
         say = lambda text: None
     else:
-        from speak import load_tts
+        from speak import load_tts, load_cloned_synth
         print("Loading the voice ...")
-        synth, _, _ = load_tts(args.model_dir, args.voice, args.speed, args.pitch, args.softness)
+        if args.voice_backend in ("voicekit", "xtts"):
+            synth = load_cloned_synth(args.voice_backend, args.clone_voice, args.speed,
+                                      args.pitch, args.softness)
+        else:
+            synth, _, _ = load_tts(args.model_dir, args.voice, args.speed, args.pitch, args.softness)
+        if not args.no_cache:
+            from audio_cache import AudioCache, clone_voice_key, voice_key
+            if args.voice_backend == "kokoro":
+                key = voice_key(args.voice, args.speed, args.pitch, args.softness)
+            else:
+                key = clone_voice_key(args.voice_backend, args.clone_voice, args.speed,
+                                      args.pitch, args.softness)
+            cache = AudioCache(args.audio_cache, key)
+            ready = cache.load()
+            if ready:
+                synth = cache.wrap(synth)
+                print(f"Pre-rendered audio: {ready} fixed lines play instantly.")
         speaker = SpeechQueue(synth)
         say = speaker.say
 
+    warmup_model()                       # load the model now, not in the middle of the first reply
     print("Baymax is ready. Type a message (or 'quit').\n")
     try:
         while True:
