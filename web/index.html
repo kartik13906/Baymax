@@ -62,7 +62,7 @@
     <input id="text" type="text" maxlength="500" placeholder="Or type a message" aria-label="Type a message">
     <button type="submit">Send</button>
   </form>
-  <footer>Your voice is processed by the Baymax server you are connected to and is not stored. If memory is on, your name, allergies and pain notes are saved on that server; say &ldquo;forget everything about me&rdquo; to erase them.</footer>
+  <footer>Your voice is processed by the Baymax server you are connected to. Nothing is recorded to disk.</footer>
 </main>
 
 <script>
@@ -159,13 +159,7 @@ async function startMic() {
   node.port.onmessage = (ev) => {
     if (ws && ws.readyState === 1 && !speaking()) ws.send(ev.data);
   };
-  // An AudioWorkletNode is only pulled by the audio graph when it reaches the
-  // destination. A muted gain node keeps the mic processing without echoing it.
-  const sink = mic.createGain();
-  sink.gain.value = 0;
   source.connect(node);
-  node.connect(sink);
-  sink.connect(mic.destination);
   micBtn.textContent = "Stop listening"; micBtn.classList.add("live");
   setStatus("Listening…");
 }

@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1 \
     BAYMAX_AUDIO_CACHE=/opt/audio_cache
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libgomp1 libsndfile1 espeak-ng curl openssl ca-certificates \
+ && apt-get install -y --no-install-recommends libgomp1 libsndfile1 curl openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,15 +20,13 @@ RUN pip install torch torchaudio --index-url https://download.pytorch.org/whl/cp
  && pip install -r requirements-server.txt
 
 # 2. the code
-COPY *.py voice.json LICENSE ./
+COPY *.py voice.json ./
 COPY web ./web
 COPY docker/entrypoint.sh /entrypoint.sh
 
 # 3. models that never change, baked in so the first start needs no downloads (about 1 GB)
-ARG BAYMAX_WHISPER_MODEL=distil-medium.en
-ENV BAYMAX_WHISPER_MODEL=$BAYMAX_WHISPER_MODEL
 RUN python -c "from speak import ensure_model_files; ensure_model_files('/opt/kokoro')" \
- && python -c "from faster_whisper import WhisperModel; WhisperModel('$BAYMAX_WHISPER_MODEL', device='cpu', compute_type='int8')" \
+ && python -c "from faster_whisper import WhisperModel; WhisperModel('distil-medium.en', device='cpu', compute_type='int8')" \
  && python -c "from silero_vad import load_silero_vad; load_silero_vad()"
 
 # (the default helpline wording is generic; docker-compose.yml passes the same default at run time, so the cache matches)

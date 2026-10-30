@@ -220,9 +220,7 @@ docker compose up --build    # first run downloads about 3 GB, then it is fast
 
 Open **http://localhost:8000**, press **Start listening**, and say "hello Baymax" (or type it).
 
-What starts, in order: `ollama` (runs the language model), `model-fetch` (copies `outputs/baymax-q4.gguf` if it exists, otherwise downloads it once), `model-init` (registers it with Ollama as `baymax`), and `baymax` (Whisper speech-to-text, the Kokoro voice, the safety layers and the web page). Stop with `docker compose down`; add `-v` to also delete the downloaded model and the memory file.
-
-**If the model download returns 401.** The default Hugging Face repository is private until you publish it. Either put `outputs/baymax-q4.gguf` on the machine (the compose file copies it automatically), make the repository public, or set `HF_TOKEN` in `.env`. You can also point `BAYMAX_GGUF_URL` at any public `.gguf` URL. `BAYMAX_GGUF_SHA256` is optional but recommended for a shared file.
+What starts, in order: `ollama` (runs the language model), `model-fetch` (downloads the fine-tuned model file once), `model-init` (registers it with Ollama as `baymax`), and `baymax` (Whisper speech-to-text, the Kokoro voice, the safety layers and the web page). Stop with `docker compose down`; add `-v` to also delete the downloaded model and the memory file.
 
 **Speed.** The default image runs everything on the CPU, so expect a few seconds per reply on an ordinary laptop. With an NVIDIA GPU and the NVIDIA Container Toolkit, run the language model on the GPU (the slowest part):
 
@@ -240,21 +238,9 @@ BAYMAX_TOKEN=pick-a-long-password
 
 Then open `https://<your-computer's-address>:8000` and accept the certificate warning once. Never expose this to the public internet: it has no accounts, and everyone who can open the page shares one memory file. Set `BAYMAX_MEMORY=off` to remember nothing.
 
-**Settings** (all in `.env`; see `docker-compose.yml`): `BAYMAX_EMERGENCY_NUMBER` (default 112) and `BAYMAX_CRISIS_HELPLINE` (default empty = generic wording). **Set these for where you live**: Baymax tells people to call this number in an emergency. `BAYMAX_WHISPER_MODEL` (`base.en` or `small.en` are faster on weak CPUs), `BAYMAX_MAX_SESSIONS`, `BAYMAX_IDLE` (seconds before it sleeps), `BAYMAX_LOCAL_FRIEND=1`, `GROQ_API_KEY` / `OPENROUTER_API_KEY` for the online friend chat.
+**Settings** (all in `.env`; see `docker-compose.yml`): `BAYMAX_EMERGENCY_NUMBER` (default 112) and `BAYMAX_CRISIS_HELPLINE` (default empty = generic wording). **Set these for where you live**: Baymax tells people to call this number in an emergency. `BAYMAX_WHISPER_MODEL` (`base.en` or `small.en` are faster on weak CPUs), `BAYMAX_MAX_SESSIONS`, `BAYMAX_LOCAL_FRIEND=1`, `GROQ_API_KEY` / `OPENROUTER_API_KEY` for the online friend chat.
 
-**Share the built image (optional).** The model and Ollama stay separate, so publish only the `baymax` image:
-
-```bash
-docker build -t yourname/baymax:latest .
-docker push yourname/baymax:latest
-# on the other device:
-BAYMAX_IMAGE=yourname/baymax:latest docker compose pull
-BAYMAX_IMAGE=yourname/baymax:latest docker compose up --no-build
-```
-
-The other device still needs the model file (or `HF_TOKEN` / a public `BAYMAX_GGUF_URL`) and its own `.env`. Do not share `.env`: it contains API keys.
-
-**Privacy in Docker.** Audio and text are processed inside your containers. Health talk, the pain check-in, remedies, memory and safety replies never leave them. Only casual chat can go to Groq/OpenRouter, and only if you add keys. Audio is not recorded to disk. If memory is on, the small `baymax-data` volume stores your name, allergies and pain notes; `docker compose down -v` deletes it. The image uses the preset Kokoro voice only; no cloned voice is included or supported in Docker.
+**Privacy in Docker.** Audio and text are processed inside your containers. Health talk, the pain check-in, remedies, memory and safety replies never leave them. Only casual chat can go to Groq/OpenRouter, and only if you add keys. Nothing is recorded to disk except the small memory file in the `baymax-data` volume. The image uses the preset Kokoro voice only; no cloned voice is included or supported in Docker.
 
 ### Publishing the model file (for the maintainer)
 
@@ -325,7 +311,7 @@ python test_speech.py       # sentence buffer, speech queue (incl. timeout), voi
 python test_audio_cache.py  # 8 checks: pre-rendered audio and common openers
 python test_fast_first.py   # 7 checks: the optional fast first clause
 python test_server.py       # 15 checks of the web server with fake models (pip install fastapi uvicorn httpx)
-python test_backends.py     # 12 checks of the online provider chain against a fake server
+python test_backends.py     # 16 checks of the online provider chain against a fake server
 python latency.py           # self-test of the timing code
 python remedies.py          # validates every remedy entry
 ```
