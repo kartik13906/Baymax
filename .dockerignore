@@ -1,0 +1,11 @@
+.git
+venv
+__pycache__
+outputs
+models
+voice_lab
+audio_cache
+*.jsonl
+*.db
+*.gguf
+.env

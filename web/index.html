@@ -34,6 +34,8 @@
   .me { align-self: flex-end; background: var(--me); }
   .bot { align-self: flex-start; border: 1px solid var(--line); }
   .err { align-self: center; color: var(--accent); font-size: .9rem; }
+  .warn[hidden] { display: none; }
+  .warn button { margin-left: 8px; padding: 6px 14px; }
   .hint { color: var(--muted); font-size: .9rem; align-self: center; text-align: center; }
   form { display: flex; gap: 8px; }
   input[type=text] { flex: 1; font: inherit; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--line);
@@ -47,6 +49,11 @@
   <div class="warn" role="note">
     Baymax is a learning project, <strong>not a medical device</strong>. It cannot diagnose anything and may be wrong.
     In an emergency, call your local emergency number right away.
+  </div>
+
+  <div id="sound" class="warn" role="alert" hidden>
+    Your browser is blocking sound, so you can read Baymax but not hear it.
+    <button id="soundBtn" type="button">Enable sound</button>
   </div>
 
   <div class="bar">
@@ -108,10 +115,16 @@ function connect() {
 }
 
 // ---------- speaker ----------
+function showSoundBanner() { $("sound").hidden = !ctx || ctx.state === "running"; }
 function ensureAudio() {
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-  if (ctx.state === "suspended") ctx.resume();
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.onstatechange = showSoundBanner;
+  }
+  if (ctx.state === "suspended") ctx.resume().then(showSoundBanner, showSoundBanner);
+  showSoundBanner();
 }
+$("soundBtn").onclick = ensureAudio;                    // a click is the user action browsers require before they allow sound
 async function play(buf) {
   ensureAudio();
   try {
@@ -119,7 +132,10 @@ async function play(buf) {
     const src = ctx.createBufferSource(); src.buffer = audio; src.connect(ctx.destination);
     const start = Math.max(ctx.currentTime + 0.02, playUntil);
     src.start(start); playUntil = start + audio.duration;
-  } catch (e) { console.warn("could not play audio", e); }
+  } catch (e) {
+    console.warn("could not play audio", e);
+    say("I could not play my voice in this browser (" + (e && e.message ? e.message : e) + "). Try Chrome or Firefox.", "err");
+  }
 }
 // the microphone is muted while Baymax talks (and shortly after), so it never answers itself
 const speaking = () => ctx && ctx.currentTime < playUntil + 0.5;

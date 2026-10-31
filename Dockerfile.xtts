@@ -1,0 +1,4 @@
+FROM baymax-web
+RUN pip install coqui-tts
+ENV COQUI_TOS_AGREED=1 VOICEKIT_HOME=/voices \
+    BAYMAX_VOICE_BACKEND=xtts BAYMAX_CLONE_VOICE=baymax

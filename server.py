@@ -329,20 +329,30 @@ class _Vad:
 class Engine:
     def __init__(self, args):
         from listen import load_stt
-        from speak import load_tts
+        from speak import load_cloned_synth, load_tts
         self.args = args
         self.stt, self.stt_device = load_stt(args.stt_device)
         print("Loading the voice ...")
-        synth, self.sample_rate, _ = load_tts(args.model_dir, args.voice, args.speed, args.pitch, args.softness)
+        backend = args.voice_backend
+        if backend in ("xtts", "voicekit"):
+            # your own cloned voice (only when you run the server yourself; the preset voice is the default)
+            synth, self.sample_rate = load_cloned_synth(backend, args.clone_voice, args.speed, args.pitch, args.softness), None
+            print(f"Speaking with the cloned voice '{args.clone_voice}' ({backend}).")
+        else:
+            synth, self.sample_rate, _ = load_tts(args.model_dir, args.voice, args.speed, args.pitch, args.softness)
         if not args.no_cache:
-            from audio_cache import AudioCache, voice_key
-            cache = AudioCache(args.audio_cache, voice_key(args.voice, args.speed, args.pitch, args.softness))
+            from audio_cache import AudioCache, clone_voice_key, voice_key
+            if backend == "kokoro":
+                key = voice_key(args.voice, args.speed, args.pitch, args.softness)
+            else:
+                key = clone_voice_key(backend, args.clone_voice, args.speed, args.pitch, args.softness)
+            cache = AudioCache(args.audio_cache, key)
             ready = cache.load()
             if ready:
                 synth = cache.wrap(synth)
                 print(f"Pre-rendered audio: {ready} fixed lines play instantly.")
             else:
-                print("No pre-rendered audio found (python prerender.py --voice-backend kokoro). Fixed lines will be a little slower.")
+                print(f"No pre-rendered audio found (python prerender.py --voice-backend {backend}). Fixed lines will be a little slower.")
         self._synth = synth
         self._tts_lock, self._stt_lock = threading.Lock(), threading.Lock()
 
@@ -397,11 +407,13 @@ def main():
     ap.add_argument("--pitch", type=float, default=settings["pitch"])
     ap.add_argument("--softness", type=float, default=settings["softness"])
     ap.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
+    ap.add_argument("--voice-backend", default=env("BAYMAX_VOICE_BACKEND", "kokoro"), choices=["kokoro", "voicekit", "xtts"],
+                    help="kokoro = preset voice (default); xtts / voicekit = a voice you registered yourself (see README)")
+    ap.add_argument("--clone-voice", default=env("BAYMAX_CLONE_VOICE", "baymax"), help="cloned-voice profile name")
     ap.add_argument("--ssl-certfile", default=env("BAYMAX_SSL_CERT", ""))
     ap.add_argument("--ssl-keyfile", default=env("BAYMAX_SSL_KEY", ""))
     args = ap.parse_args()
     args.online_friend, args.no_audio, args.silent = False, False, False
-    args.voice_backend, args.clone_voice = "kokoro", "baymax"     # the server only uses the preset voice: no personal voices are ever shipped
 
     if not args.local_friend and (os.environ.get("GROQ_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
         args.online_friend = True
