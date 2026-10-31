@@ -1,0 +1,2 @@
+# Only for running the tests (python test_server.py). starlette already comes with fastapi.
+httpx

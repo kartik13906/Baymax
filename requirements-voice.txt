@@ -1,0 +1,8 @@
+# Cloned voice (the default backend in baymax_live.py). Install AFTER requirements.txt and torch:
+#   pip install -r requirements-voice.txt
+# XTTS v2 (needs Python < 3.13 for some coqui-tts releases; check if install fails on newer Pythons).
+coqui-tts
+soundfile
+librosa
+# Optional, only for --voice-backend voicekit (the older SV2TTS cloner):
+# voice-cloning

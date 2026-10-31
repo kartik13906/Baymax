@@ -1,5 +1,5 @@
 # Runtime requirements for running Baymax (see README.md). PyTorch is installed separately (pip install torch).
-# Training libraries are in requirements-train.txt. The GPU voice build is in requirements-gpu.txt.
+# The cloned voice (XTTS) is in requirements-voice.txt. Training libraries are in requirements-train.txt. The GPU voice build is in requirements-gpu.txt.
 numpy
 scipy
 ollama
